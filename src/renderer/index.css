@@ -54,9 +54,19 @@ input::placeholder {
 
 /* ─── Allow text selection in conversation content ─── */
 .prose-cloud,
-.conversation-selectable {
+.conversation-selectable,
+.no-drag .prose-cloud,
+.no-drag .conversation-selectable {
   user-select: text;
   -webkit-user-select: text;
+  cursor: text;
+}
+.conversation-selectable button,
+.conversation-selectable a,
+.conversation-selectable [role="button"],
+.conversation-selectable .cursor-pointer,
+.prose-cloud a {
+  cursor: pointer;
 }
 
 /* ─── Prose overrides for markdown ─── */

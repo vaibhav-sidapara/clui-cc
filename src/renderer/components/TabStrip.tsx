@@ -47,7 +47,7 @@ export function TabStrip() {
   return (
     <div
       data-clui-ui
-      className="flex items-center no-drag"
+      className="flex items-center"
       style={{ padding: '8px 0' }}
     >
       {/* Scrollable tabs area — clipped by master card edge */}

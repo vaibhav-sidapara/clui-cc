@@ -58,7 +58,8 @@ export default function App() {
   }, [])
 
   // Shared drag ref — must be declared before the setIgnoreMouseEvents effect so both closures can read it
-  const dragRef = useRef<{ startX: number; startY: number } | null>(null)
+  const dragRef = useRef<{ startX: number; startY: number; active: boolean } | null>(null)
+  const DRAG_THRESHOLD_PX = 5
 
   // Vertical position tracking — window moves first (until macOS clamps it), then CSS overflows
   const PILL_HEIGHT_CONST = 720
@@ -75,7 +76,7 @@ export default function App() {
 
     const onMouseMove = (e: MouseEvent) => {
       // While dragging, keep full mouse capture — don't toggle ignore-events
-      if (dragRef.current) return
+      if (dragRef.current?.active) return
       const el = document.elementFromPoint(e.clientX, e.clientY)
       const isUI = !!(el && el.closest('[data-clui-ui]'))
       const shouldIgnore = !isUI
@@ -90,7 +91,7 @@ export default function App() {
     }
 
     const onMouseLeave = () => {
-      if (dragRef.current) return
+      if (dragRef.current?.active) return
       if (lastIgnored !== true) {
         lastIgnored = true
         window.clui.setIgnoreMouseEvents(true, { forward: true })
@@ -111,10 +112,9 @@ export default function App() {
 
     const onMouseDown = (e: MouseEvent) => {
       const el = e.target as HTMLElement
-      // Skip interactive elements — everything else on the card is draggable
-      if (el.closest('button, input, textarea, a, select, [role="button"], [contenteditable], .cm-editor')) return
+      // Skip interactive elements and chat body; tab strip + card chrome stay draggable
+      if (el.closest('button, input, textarea, a, select, [role="button"], [contenteditable], .cm-editor, .no-drag, .conversation-selectable, .prose-cloud')) return
       if (!el.closest('[data-clui-ui]')) return
-      e.preventDefault()
       // Double-click: snap back to default position
       if (e.detail >= 2) {
         window.clui.resetWindowPosition()
@@ -123,13 +123,18 @@ export default function App() {
         document.documentElement.style.setProperty('--clui-card-y', '0px')
         return
       }
-      // Ensure full mouse capture for the duration of the drag
-      window.clui.setIgnoreMouseEvents(false)
-      dragRef.current = { startX: e.screenX, startY: e.screenY }
+      dragRef.current = { startX: e.screenX, startY: e.screenY, active: false }
     }
 
     const onMouseMove = (e: MouseEvent) => {
       if (!dragRef.current) return
+      if (!dragRef.current.active) {
+        const pendingDx = e.screenX - dragRef.current.startX
+        const pendingDy = e.screenY - dragRef.current.startY
+        if (Math.hypot(pendingDx, pendingDy) < DRAG_THRESHOLD_PX) return
+        dragRef.current.active = true
+        window.clui.setIgnoreMouseEvents(false)
+      }
       const dx = e.screenX - dragRef.current.startX
       const dy = e.screenY - dragRef.current.startY
       if (dx !== 0 || dy !== 0) {
@@ -274,8 +279,8 @@ export default function App() {
               zIndex: isExpanded ? 20 : 10,
             }}
           >
-            {/* Tab strip — always mounted */}
-            <div className="no-drag">
+            {/* Tab strip — drag handle for the frameless window */}
+            <div>
               <TabStrip />
             </div>
 
