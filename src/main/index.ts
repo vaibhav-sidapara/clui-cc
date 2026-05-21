@@ -9,6 +9,7 @@ import { fetchCatalog, listInstalled, installPlugin, uninstallPlugin } from './m
 import { log as _log, LOG_FILE, flushLogs } from './logger'
 import { getCliEnv } from './cli-env'
 import { IPC } from '../shared/types'
+import { getSessionModel, setSessionModel } from './session-models'
 import type { RunOptions, NormalizedEvent, EnrichedError } from '../shared/types'
 
 const DEBUG_MODE = process.env.CLUI_DEBUG === '1'
@@ -578,6 +579,31 @@ ipcMain.handle(IPC.LIST_SESSIONS, async (_e, projectPath?: string) => {
     log(`LIST_SESSIONS error: ${err}`)
     return []
   }
+})
+
+const SESSION_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+function validateSessionProjectPath(projectPath?: string): string | null {
+  const cwd = projectPath || process.cwd()
+  if (/[\0\r\n]/.test(cwd) || !cwd.startsWith('/')) return null
+  return cwd
+}
+
+ipcMain.handle(IPC.GET_SESSION_MODEL, (_e, arg: { sessionId: string; projectPath?: string }) => {
+  const { sessionId, projectPath } = arg
+  if (!SESSION_UUID_RE.test(sessionId)) return null
+  const cwd = validateSessionProjectPath(projectPath)
+  if (!cwd) return null
+  return getSessionModel(cwd, sessionId)
+})
+
+ipcMain.handle(IPC.SET_SESSION_MODEL, (_e, arg: { sessionId: string; projectPath?: string; modelId: string | null }) => {
+  const { sessionId, projectPath, modelId } = arg
+  if (!SESSION_UUID_RE.test(sessionId)) return false
+  const cwd = validateSessionProjectPath(projectPath)
+  if (!cwd) return false
+  setSessionModel(cwd, sessionId, modelId)
+  return true
 })
 
 // Load conversation history from a session's JSONL file

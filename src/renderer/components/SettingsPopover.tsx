@@ -1,9 +1,10 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import { motion } from 'framer-motion'
-import { DotsThree, Bell, ArrowsOutSimple, Moon } from '@phosphor-icons/react'
+import { DotsThree, Bell, ArrowsOutSimple, Moon, Robot, CaretDown, Check } from '@phosphor-icons/react'
 import { useThemeStore } from '../theme'
 import { useSessionStore } from '../stores/sessionStore'
+import { AVAILABLE_MODELS, getModelDisplayLabel } from '../stores/sessionStore'
 import { usePopoverLayer } from './PopoverLayer'
 import { useColors } from '../theme'
 
@@ -50,7 +51,10 @@ export function SettingsPopover() {
   const setThemeMode = useThemeStore((s) => s.setThemeMode)
   const expandedUI = useThemeStore((s) => s.expandedUI)
   const setExpandedUI = useThemeStore((s) => s.setExpandedUI)
+  const defaultModel = useThemeStore((s) => s.defaultModel)
+  const setDefaultModel = useThemeStore((s) => s.setDefaultModel)
   const isExpanded = useSessionStore((s) => s.isExpanded)
+  const [modelMenuOpen, setModelMenuOpen] = useState(false)
   const popoverLayer = usePopoverLayer()
   const colors = useColors()
 
@@ -92,6 +96,7 @@ export function SettingsPopover() {
       const target = e.target as Node
       if (triggerRef.current?.contains(target)) return
       if (popoverRef.current?.contains(target)) return
+      setModelMenuOpen(false)
       setOpen(false)
     }
     document.addEventListener('mousedown', handler)
@@ -220,6 +225,63 @@ export function SettingsPopover() {
                   label="Toggle dark theme"
                 />
               </div>
+            </div>
+
+            <div style={{ height: 1, background: colors.popoverBorder }} />
+
+            {/* Default model */}
+            <div>
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2 min-w-0">
+                  <Robot size={14} style={{ color: colors.textTertiary }} />
+                  <div className="text-[12px] font-medium" style={{ color: colors.textPrimary }}>
+                    Default model
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setModelMenuOpen((o) => !o)}
+                  className="flex items-center gap-0.5 text-[11px] rounded-full px-2 py-0.5 transition-colors"
+                  style={{ color: colors.textSecondary, border: `1px solid ${colors.containerBorder}` }}
+                  aria-expanded={modelMenuOpen}
+                  aria-haspopup="listbox"
+                >
+                  {getModelDisplayLabel(defaultModel)}
+                  <CaretDown size={10} style={{ opacity: 0.6 }} />
+                </button>
+              </div>
+              {modelMenuOpen && (
+                <div
+                  className="mt-2 rounded-lg overflow-hidden"
+                  style={{ border: `1px solid ${colors.popoverBorder}` }}
+                  role="listbox"
+                >
+                  {AVAILABLE_MODELS.map((m) => {
+                    const isSelected = defaultModel === m.id
+                    return (
+                      <button
+                        key={m.id}
+                        type="button"
+                        role="option"
+                        aria-selected={isSelected}
+                        onClick={() => {
+                          setDefaultModel(m.id)
+                          setModelMenuOpen(false)
+                        }}
+                        className="w-full flex items-center justify-between px-2.5 py-1.5 text-[11px] transition-colors"
+                        style={{
+                          color: isSelected ? colors.textPrimary : colors.textSecondary,
+                          fontWeight: isSelected ? 600 : 400,
+                          background: isSelected ? colors.surfaceSecondary : 'transparent',
+                        }}
+                      >
+                        {m.label}
+                        {isSelected && <Check size={12} style={{ color: colors.accent }} />}
+                      </button>
+                    )
+                  })}
+                </div>
+              )}
             </div>
           </div>
         </motion.div>,

@@ -2,18 +2,19 @@ import React, { useState, useRef, useEffect, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Terminal, CaretDown, Check, FolderOpen, Plus, X, ShieldCheck } from '@phosphor-icons/react'
-import { useSessionStore, AVAILABLE_MODELS, getModelDisplayLabel } from '../stores/sessionStore'
+import { useSessionStore, AVAILABLE_MODELS, getModelDisplayLabel, getEffectiveModel } from '../stores/sessionStore'
+import { useThemeStore } from '../theme'
 import { usePopoverLayer } from './PopoverLayer'
 import { useColors } from '../theme'
 
 /* ─── Model Picker (inline — tightly coupled to StatusBar) ─── */
 
 function ModelPicker() {
-  const preferredModel = useSessionStore((s) => s.preferredModel)
-  const setPreferredModel = useSessionStore((s) => s.setPreferredModel)
+  const defaultModel = useThemeStore((s) => s.defaultModel)
+  const setTabModel = useSessionStore((s) => s.setTabModel)
   const tab = useSessionStore(
     (s) => s.tabs.find((t) => t.id === s.activeTabId),
-    (a, b) => a === b || (!!a && !!b && a.status === b.status && a.sessionModel === b.sessionModel),
+    (a, b) => a === b || (!!a && !!b && a.status === b.status && a.sessionModel === b.sessionModel && a.modelOverride === b.modelOverride),
   )
   const popoverLayer = usePopoverLayer()
   const colors = useColors()
@@ -52,15 +53,10 @@ function ModelPicker() {
     setOpen((o) => !o)
   }
 
+  const effectiveModel = tab ? getEffectiveModel(tab, defaultModel) : defaultModel
   const activeLabel = (() => {
-    if (preferredModel) {
-      const m = AVAILABLE_MODELS.find((m) => m.id === preferredModel)
-      return m?.label || getModelDisplayLabel(preferredModel)
-    }
-    if (tab?.sessionModel) {
-      return getModelDisplayLabel(tab.sessionModel)
-    }
-    return AVAILABLE_MODELS[0].label
+    const m = AVAILABLE_MODELS.find((item) => item.id === effectiveModel)
+    return m?.label || getModelDisplayLabel(effectiveModel)
   })()
 
   return (
@@ -103,11 +99,11 @@ function ModelPicker() {
         >
           <div className="py-1">
             {AVAILABLE_MODELS.map((m) => {
-              const isSelected = preferredModel === m.id || (!preferredModel && m.id === AVAILABLE_MODELS[0].id)
+              const isSelected = effectiveModel === m.id
               return (
                 <button
                   key={m.id}
-                  onClick={() => { setPreferredModel(m.id); setOpen(false) }}
+                  onClick={() => { setTabModel(m.id); setOpen(false) }}
                   className="w-full flex items-center justify-between px-3 py-1.5 text-[11px] transition-colors"
                   style={{
                     color: isSelected ? colors.textPrimary : colors.textSecondary,

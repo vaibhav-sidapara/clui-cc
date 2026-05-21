@@ -1,42 +1,33 @@
 import { create } from 'zustand'
 import type { TabStatus, NormalizedEvent, EnrichedError, Message, TabState, Attachment, CatalogPlugin, PluginStatus } from '../../shared/types'
 import { useThemeStore } from '../theme'
+import {
+  AVAILABLE_MODELS,
+  getEffectiveModel,
+  getModelDisplayLabel,
+  isKnownModelId,
+} from '../models'
 import notificationSrc from '../../../resources/notification.mp3'
 
-// ─── Known models ───
+export { AVAILABLE_MODELS, getModelDisplayLabel, getEffectiveModel }
 
-export const AVAILABLE_MODELS = [
-  { id: 'claude-opus-4-6', label: 'Opus 4.6' },
-  { id: 'claude-sonnet-4-6', label: 'Sonnet 4.6' },
-  { id: 'claude-haiku-4-5-20251001', label: 'Haiku 4.5' },
-] as const
-
-function normalizeModelId(modelId: string): string {
-  // Claude sometimes appends context window hints like "[1m]" to model IDs.
-  return modelId.replace(/\[[^\]]+\]/g, '').trim()
+function resolveProjectPath(tab: TabState, homePath?: string): string {
+  if (tab.workingDirectory && tab.workingDirectory !== '~') return tab.workingDirectory
+  return homePath || '~'
 }
 
-export function getModelDisplayLabel(modelId: string): string {
-  const normalizedId = normalizeModelId(modelId)
-  const has1MContext = /\[\s*1m\s*\]/i.test(modelId)
+async function persistSessionModel(tab: TabState, homePath?: string): Promise<void> {
+  if (!tab.claudeSessionId || !tab.modelOverride) return
+  const projectPath = resolveProjectPath(tab, homePath)
+  await window.clui.setSessionModel(tab.claudeSessionId, projectPath, tab.modelOverride).catch(() => {})
+}
 
-  const known = AVAILABLE_MODELS.find((m) => m.id === normalizedId)
-  if (known) {
-    return has1MContext ? `${known.label} (1M)` : known.label
-  }
-
-  // Fallback for future model IDs not yet listed in AVAILABLE_MODELS.
-  const compact = normalizedId
-    .replace(/^claude-/, '')
-    .replace(/-\d{8}$/, '')
-  const familyMatch = compact.match(/^(opus|sonnet|haiku)-(\d+)-(\d+)$/i)
-  if (familyMatch) {
-    const family = familyMatch[1][0].toUpperCase() + familyMatch[1].slice(1).toLowerCase()
-    const label = `${family} ${familyMatch[2]}.${familyMatch[3]}`
-    return has1MContext ? `${label} (1M)` : label
-  }
-
-  return has1MContext ? `${normalizedId} (1M)` : normalizedId
+async function loadSessionModelOverride(
+  sessionId: string,
+  projectPath: string,
+): Promise<string | null> {
+  const saved = await window.clui.getSessionModel(sessionId, projectPath).catch(() => null)
+  return saved && isKnownModelId(saved) ? saved : null
 }
 
 // ─── Store ───
@@ -56,8 +47,6 @@ interface State {
   isExpanded: boolean
   /** Global info fetched on startup (not per-session) */
   staticInfo: StaticInfo | null
-  /** User's preferred model override (null = use default) */
-  preferredModel: string | null
   /** Global permission mode: 'ask' shows cards, 'auto' auto-approves all tool calls */
   permissionMode: 'ask' | 'auto'
 
@@ -73,7 +62,7 @@ interface State {
 
   // Actions
   initStaticInfo: () => Promise<void>
-  setPreferredModel: (model: string | null) => void
+  setTabModel: (modelId: string) => void
   setPermissionMode: (mode: 'ask' | 'auto') => void
   createTab: () => Promise<string>
   selectTab: (tabId: string) => void
@@ -136,6 +125,7 @@ function makeLocalTab(): TabState {
     title: 'New Tab',
     lastResult: null,
     sessionModel: null,
+    modelOverride: null,
     sessionTools: [],
     sessionMcpServers: [],
     sessionSkills: [],
@@ -154,7 +144,6 @@ export const useSessionStore = create<State>((set, get) => ({
   activeTabId: initialTab.id,
   isExpanded: false,
   staticInfo: null,
-  preferredModel: null,
   permissionMode: 'ask',
 
   // Marketplace
@@ -182,8 +171,18 @@ export const useSessionStore = create<State>((set, get) => ({
     } catch {}
   },
 
-  setPreferredModel: (model) => {
-    set({ preferredModel: model })
+  setTabModel: (modelId) => {
+    if (!isKnownModelId(modelId)) return
+    const { activeTabId, staticInfo } = get()
+    let updatedTab: TabState | null = null
+    set((s) => ({
+      tabs: s.tabs.map((t) => {
+        if (t.id !== activeTabId) return t
+        updatedTab = { ...t, modelOverride: modelId }
+        return updatedTab
+      }),
+    }))
+    if (updatedTab) void persistSessionModel(updatedTab, staticInfo?.homePath)
   },
 
   setPermissionMode: (mode) => {
@@ -394,6 +393,7 @@ export const useSessionStore = create<State>((set, get) => ({
         timestamp: m.timestamp,
       }))
 
+      const savedModel = await loadSessionModelOverride(sessionId, defaultDir)
       const tab: TabState = {
         ...makeLocalTab(),
         id: tabId,
@@ -402,6 +402,7 @@ export const useSessionStore = create<State>((set, get) => ({
         workingDirectory: defaultDir,
         hasChosenDirectory: !!projectPath,
         messages,
+        modelOverride: savedModel,
       }
       set((s) => ({
         tabs: [...s.tabs, tab],
@@ -411,11 +412,13 @@ export const useSessionStore = create<State>((set, get) => ({
       // Don't call initSession — the first real prompt will use --resume with the sessionId
       return tabId
     } catch {
+      const savedModel = await loadSessionModelOverride(sessionId, defaultDir).catch(() => null)
       const tab = makeLocalTab()
       tab.claudeSessionId = sessionId
       tab.title = title || 'Resumed Session'
       tab.workingDirectory = defaultDir
       tab.hasChosenDirectory = !!projectPath
+      tab.modelOverride = savedModel
       set((s) => ({
         tabs: [...s.tabs, tab],
         activeTabId: tab.id,
@@ -504,6 +507,7 @@ export const useSessionStore = create<State>((set, get) => ({
               workingDirectory: dir,
               hasChosenDirectory: true,
               claudeSessionId: null,
+              modelOverride: null,
               additionalDirs: [],
             }
           : t
@@ -610,12 +614,13 @@ export const useSessionStore = create<State>((set, get) => ({
     }))
 
     // Send to backend — ControlPlane will queue if a run is active
-    const { preferredModel } = get()
+    const defaultModel = useThemeStore.getState().defaultModel
+    const model = getEffectiveModel(tab, defaultModel)
     window.clui.prompt(activeTabId, requestId, {
       prompt: fullPrompt,
       projectPath: resolvedPath,
       sessionId: tab.claudeSessionId || undefined,
-      model: preferredModel || undefined,
+      model,
       addDirs: tab.additionalDirs.length > 0 ? tab.additionalDirs : undefined,
     }).catch((err: Error) => {
       get().handleError(activeTabId, {
@@ -638,13 +643,27 @@ export const useSessionStore = create<State>((set, get) => ({
         const updated = { ...tab }
 
         switch (event.type) {
-          case 'session_init':
+          case 'session_init': {
             updated.claudeSessionId = event.sessionId
             updated.sessionModel = event.model
             updated.sessionTools = event.tools
             updated.sessionMcpServers = event.mcpServers
             updated.sessionSkills = event.skills
             updated.sessionVersion = event.version
+            const tabSnapshot = { ...updated }
+            if (updated.modelOverride) {
+              void persistSessionModel(tabSnapshot, s.staticInfo?.homePath)
+            } else {
+              void loadSessionModelOverride(event.sessionId, resolveProjectPath(tabSnapshot, s.staticInfo?.homePath))
+                .then((savedModel) => {
+                  if (!savedModel) return
+                  useSessionStore.setState((state) => ({
+                    tabs: state.tabs.map((t) =>
+                      t.id === tabId && !t.modelOverride ? { ...t, modelOverride: savedModel } : t,
+                    ),
+                  }))
+                })
+            }
             // Don't change status/activity for warmup inits — they're invisible
             if (!event.isWarmup) {
               updated.status = 'running'
@@ -660,6 +679,7 @@ export const useSessionStore = create<State>((set, get) => ({
               }
             }
             break
+          }
 
           case 'text_chunk': {
             updated.currentActivity = 'Writing...'
