@@ -437,7 +437,7 @@ export function StatusBar() {
       <div className="flex items-center gap-1.5 flex-shrink-0">
         <button
           onClick={handleOpenInTerminal}
-          className="flex items-center gap-1 text-[11px] rounded-full px-2 py-0.5 transition-colors"
+          className="clui-pointer flex items-center gap-1 text-[11px] rounded-full px-2 py-0.5 transition-colors"
           style={{ color: colors.textTertiary }}
           title={`Open this session in ${cliLabel}`}
         >

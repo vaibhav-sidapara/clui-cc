@@ -8,6 +8,7 @@ import {
   isKnownModelId,
 } from '../models'
 import notificationSrc from '../../../resources/notification.mp3'
+import { loadOpenTabs, loadTabHistory, saveOpenTabs, type PersistedTabSnapshot } from '../tab-persistence'
 
 export { AVAILABLE_MODELS, getModelDisplayLabel, getEffectiveModel }
 
@@ -62,6 +63,8 @@ interface State {
 
   // Actions
   initStaticInfo: () => Promise<void>
+  /** Load static info, restore open tabs from last session, or create one default tab */
+  initAndRestoreTabs: () => Promise<void>
   setTabModel: (modelId: string) => void
   setPermissionMode: (mode: 'ask' | 'auto') => void
   createTab: () => Promise<string>
@@ -108,6 +111,40 @@ async function playNotificationIfHidden(): Promise<void> {
       notificationAudio.play().catch(() => {})
     }
   } catch {}
+}
+
+let tabPersistenceEnabled = false
+
+async function buildTabFromSnapshot(
+  homeDir: string,
+  snapshot?: PersistedTabSnapshot,
+): Promise<TabState> {
+  const { tabId } = await window.clui.createTab()
+  const projectPath =
+    !snapshot?.workingDirectory || snapshot.workingDirectory === '~'
+      ? homeDir
+      : snapshot.workingDirectory
+
+  let messages: Message[] = []
+  let modelOverride = snapshot?.modelOverride ?? null
+  if (snapshot?.claudeSessionId) {
+    messages = await loadTabHistory(snapshot.claudeSessionId, projectPath)
+    if (!modelOverride) {
+      modelOverride = await loadSessionModelOverride(snapshot.claudeSessionId, projectPath)
+    }
+  }
+
+  return {
+    ...makeLocalTab(),
+    id: tabId,
+    title: snapshot?.title ?? 'New Tab',
+    claudeSessionId: snapshot?.claudeSessionId ?? null,
+    workingDirectory: snapshot?.workingDirectory ?? homeDir,
+    hasChosenDirectory: snapshot?.hasChosenDirectory ?? false,
+    additionalDirs: snapshot?.additionalDirs ?? [],
+    modelOverride,
+    messages,
+  }
 }
 
 function makeLocalTab(): TabState {
@@ -169,6 +206,42 @@ export const useSessionStore = create<State>((set, get) => ({
         },
       })
     } catch {}
+  },
+
+  initAndRestoreTabs: async () => {
+    tabPersistenceEnabled = false
+    await get().initStaticInfo()
+    const homeDir = get().staticInfo?.homePath || '~'
+
+    try {
+      const saved = loadOpenTabs()
+      if (saved?.tabs.length) {
+        const restored: TabState[] = []
+        for (const snap of saved.tabs) {
+          restored.push(await buildTabFromSnapshot(homeDir, snap))
+        }
+        const active = restored[Math.min(saved.activeTabIndex, restored.length - 1)]
+        set({ tabs: restored, activeTabId: active.id })
+      } else {
+        const tab = await buildTabFromSnapshot(homeDir)
+        set({ tabs: [tab], activeTabId: tab.id })
+      }
+    } catch {
+      const fallback = makeLocalTab()
+      fallback.workingDirectory = homeDir
+      set({ tabs: [fallback], activeTabId: fallback.id })
+      try {
+        const { tabId } = await window.clui.createTab()
+        set((s) => ({
+          tabs: s.tabs.map((t) => (t.id === fallback.id ? { ...t, id: tabId } : t)),
+          activeTabId: tabId,
+        }))
+      } catch {}
+    }
+
+    tabPersistenceEnabled = true
+    const { tabs, activeTabId } = get()
+    if (tabs.length > 0) saveOpenTabs(tabs, activeTabId)
   },
 
   setTabModel: (modelId) => {
@@ -354,8 +427,7 @@ export const useSessionStore = create<State>((set, get) => ({
 
     if (s.activeTabId === tabId) {
       if (remaining.length === 0) {
-        const newTab = makeLocalTab()
-        set({ tabs: [newTab], activeTabId: newTab.id })
+        void get().createTab()
         return
       }
       const closedIndex = s.tabs.findIndex((t) => t.id === tabId)
@@ -952,3 +1024,10 @@ export const useSessionStore = create<State>((set, get) => ({
     }))
   },
 }))
+
+// Persist open tabs on every change; closed tabs are omitted automatically.
+useSessionStore.subscribe((state) => {
+  if (!tabPersistenceEnabled) return
+  if (state.tabs.length === 0) return
+  saveOpenTabs(state.tabs, state.activeTabId)
+})

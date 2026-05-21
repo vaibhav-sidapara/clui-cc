@@ -39,22 +39,7 @@ export default function App() {
   }, [setSystemTheme])
 
   useEffect(() => {
-    useSessionStore.getState().initStaticInfo().then(() => {
-      const homeDir = useSessionStore.getState().staticInfo?.homePath || '~'
-      const tab = useSessionStore.getState().tabs[0]
-      if (tab) {
-        // Set working directory to home by default (user hasn't chosen yet)
-        useSessionStore.setState((s) => ({
-          tabs: s.tabs.map((t, i) => (i === 0 ? { ...t, workingDirectory: homeDir, hasChosenDirectory: false } : t)),
-        }))
-        window.clui.createTab().then(({ tabId }) => {
-          useSessionStore.setState((s) => ({
-            tabs: s.tabs.map((t, i) => (i === 0 ? { ...t, id: tabId } : t)),
-            activeTabId: tabId,
-          }))
-        }).catch(() => {})
-      }
-    })
+    void useSessionStore.getState().initAndRestoreTabs()
   }, [])
 
   // Shared drag ref — must be declared before the setIgnoreMouseEvents effect so both closures can read it
@@ -312,7 +297,7 @@ export default function App() {
               <div className="btn-stack">
                 {/* btn-1: Attach (front, rightmost) */}
                 <button
-                  className="stack-btn stack-btn-1 glass-surface"
+                  className="stack-btn stack-btn-1 glass-surface clui-pointer"
                   title="Attach file"
                   onClick={handleAttachFile}
                   disabled={isRunning}
@@ -321,7 +306,7 @@ export default function App() {
                 </button>
                 {/* btn-2: Screenshot (middle) */}
                 <button
-                  className="stack-btn stack-btn-2 glass-surface"
+                  className="stack-btn stack-btn-2 glass-surface clui-pointer"
                   title="Take screenshot"
                   onClick={handleScreenshot}
                   disabled={isRunning}
@@ -330,7 +315,7 @@ export default function App() {
                 </button>
                 {/* btn-3: Skills (back, leftmost) */}
                 <button
-                  className="stack-btn stack-btn-3 glass-surface"
+                  className="stack-btn stack-btn-3 glass-surface clui-pointer"
                   title="Skills & Plugins"
                   onClick={() => useSessionStore.getState().toggleMarketplace()}
                   disabled={isRunning}

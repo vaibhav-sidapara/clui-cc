@@ -401,7 +401,7 @@ export function InputBar() {
       {/* Single-line: inline controls. Multi-line: controls in bottom row */}
       <div className="w-full" style={{ minHeight: 50 }}>
         {isMultiLine ? (
-          <div className="w-full">
+          <div className="clui-text-input w-full">
             <textarea
               ref={textareaRef}
               value={input}
@@ -459,7 +459,7 @@ export function InputBar() {
             </div>
           </div>
         ) : (
-          <div className="flex items-center w-full" style={{ minHeight: 50 }}>
+          <div className="clui-text-input flex items-center w-full" style={{ minHeight: 50 }}>
             <textarea
               ref={textareaRef}
               value={input}
@@ -585,7 +585,7 @@ function VoiceButtons({ voiceState, isConnecting, colors, onToggle, onCancel, on
             onMouseDown={(e) => e.preventDefault()}
             onClick={onToggle}
             disabled={isConnecting}
-            className="w-9 h-9 rounded-full flex items-center justify-center transition-colors"
+            className="clui-pointer w-9 h-9 rounded-full flex items-center justify-center transition-colors"
             style={{
               background: colors.micBg,
               color: isConnecting ? colors.micDisabled : colors.micColor,
