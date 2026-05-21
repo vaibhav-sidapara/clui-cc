@@ -4,6 +4,18 @@
  */
 import { create } from 'zustand'
 import { DEFAULT_MODEL_ID, isKnownModelId } from './models'
+import type { CliTerminalApp } from '../shared/types'
+
+export type { CliTerminalApp }
+
+export const CLI_TERMINAL_OPTIONS: { id: CliTerminalApp; label: string }[] = [
+  { id: 'terminal', label: 'Terminal' },
+  { id: 'iterm', label: 'iTerm' },
+]
+
+function isCliTerminalApp(value: unknown): value is CliTerminalApp {
+  return value === 'terminal' || value === 'iterm'
+}
 
 // ─── Color palettes ───
 
@@ -288,6 +300,8 @@ interface ThemeState {
   expandedUI: boolean
   /** Global default model for new sessions (per-session overrides live on TabState) */
   defaultModel: string
+  /** macOS app for "Open in CLI" */
+  cliTerminal: CliTerminalApp
   /** OS-reported dark mode — used when themeMode is 'system' */
   _systemIsDark: boolean
   setIsDark: (isDark: boolean) => void
@@ -295,6 +309,7 @@ interface ThemeState {
   setSoundEnabled: (enabled: boolean) => void
   setExpandedUI: (expanded: boolean) => void
   setDefaultModel: (modelId: string) => void
+  setCliTerminal: (app: CliTerminalApp) => void
   /** Called by OS theme change listener — updates system value */
   setSystemTheme: (isDark: boolean) => void
 }
@@ -325,6 +340,7 @@ type PersistedSettings = {
   soundEnabled: boolean
   expandedUI: boolean
   defaultModel: string
+  cliTerminal: CliTerminalApp
 }
 
 function loadSettings(): PersistedSettings {
@@ -337,10 +353,11 @@ function loadSettings(): PersistedSettings {
         soundEnabled: typeof parsed.soundEnabled === 'boolean' ? parsed.soundEnabled : true,
         expandedUI: typeof parsed.expandedUI === 'boolean' ? parsed.expandedUI : false,
         defaultModel: isKnownModelId(parsed.defaultModel) ? parsed.defaultModel : DEFAULT_MODEL_ID,
+        cliTerminal: isCliTerminalApp(parsed.cliTerminal) ? parsed.cliTerminal : 'terminal',
       }
     }
   } catch {}
-  return { themeMode: 'dark', soundEnabled: true, expandedUI: false, defaultModel: DEFAULT_MODEL_ID }
+  return { themeMode: 'dark', soundEnabled: true, expandedUI: false, defaultModel: DEFAULT_MODEL_ID, cliTerminal: 'terminal' }
 }
 
 function saveSettings(s: PersistedSettings): void {
@@ -353,6 +370,7 @@ function snapshotSettings(get: () => ThemeState): PersistedSettings {
     soundEnabled: get().soundEnabled,
     expandedUI: get().expandedUI,
     defaultModel: get().defaultModel,
+    cliTerminal: get().cliTerminal,
   }
 }
 
@@ -364,6 +382,7 @@ export const useThemeStore = create<ThemeState>((set, get) => ({
   soundEnabled: saved.soundEnabled,
   expandedUI: saved.expandedUI,
   defaultModel: saved.defaultModel,
+  cliTerminal: saved.cliTerminal,
   _systemIsDark: true,
   setIsDark: (isDark) => {
     set({ isDark })
@@ -386,6 +405,11 @@ export const useThemeStore = create<ThemeState>((set, get) => ({
   setDefaultModel: (modelId) => {
     const resolved = isKnownModelId(modelId) ? modelId : DEFAULT_MODEL_ID
     set({ defaultModel: resolved })
+    saveSettings(snapshotSettings(get))
+  },
+  setCliTerminal: (app) => {
+    if (!isCliTerminalApp(app)) return
+    set({ cliTerminal: app })
     saveSettings(snapshotSettings(get))
   },
   setSystemTheme: (isDark) => {

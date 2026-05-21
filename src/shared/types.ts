@@ -296,6 +296,9 @@ export interface CatalogPlugin {
   isSkillMd: boolean      // true = individual SKILL.md (direct install), false = CLI plugin (bundle install)
 }
 
+/** macOS terminal app used by "Open in CLI" */
+export type CliTerminalApp = 'terminal' | 'iterm'
+
 // ─── IPC Channel Names ───
 
 export const IPC = {

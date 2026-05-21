@@ -3,9 +3,8 @@ import { createPortal } from 'react-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Terminal, CaretDown, Check, FolderOpen, Plus, X, ShieldCheck } from '@phosphor-icons/react'
 import { useSessionStore, AVAILABLE_MODELS, getModelDisplayLabel, getEffectiveModel } from '../stores/sessionStore'
-import { useThemeStore } from '../theme'
 import { usePopoverLayer } from './PopoverLayer'
-import { useColors } from '../theme'
+import { useColors, useThemeStore } from '../theme'
 
 /* ─── Model Picker (inline — tightly coupled to StatusBar) ─── */
 
@@ -292,8 +291,11 @@ export function StatusBar() {
   const isEmpty = tab.messages.length === 0
   const hasExtraDirs = tab.additionalDirs.length > 0
 
+  const cliTerminal = useThemeStore((s) => s.cliTerminal)
+  const cliLabel = cliTerminal === 'iterm' ? 'iTerm' : 'Terminal'
+
   const handleOpenInTerminal = () => {
-    window.clui.openInTerminal(tab.claudeSessionId, tab.workingDirectory)
+    window.clui.openInTerminal(tab.claudeSessionId, tab.workingDirectory, cliTerminal)
   }
 
   const handleDirClick = () => {
@@ -437,7 +439,7 @@ export function StatusBar() {
           onClick={handleOpenInTerminal}
           className="flex items-center gap-1 text-[11px] rounded-full px-2 py-0.5 transition-colors"
           style={{ color: colors.textTertiary }}
-          title="Open this session in Terminal"
+          title={`Open this session in ${cliLabel}`}
         >
           Open in CLI
           <Terminal size={11} />

@@ -1,8 +1,8 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import { motion } from 'framer-motion'
-import { DotsThree, Bell, ArrowsOutSimple, Moon, Robot, CaretDown, Check } from '@phosphor-icons/react'
-import { useThemeStore } from '../theme'
+import { DotsThree, Bell, ArrowsOutSimple, Moon, Robot, Terminal, CaretDown, Check } from '@phosphor-icons/react'
+import { useThemeStore, CLI_TERMINAL_OPTIONS } from '../theme'
 import { useSessionStore } from '../stores/sessionStore'
 import { AVAILABLE_MODELS, getModelDisplayLabel } from '../stores/sessionStore'
 import { usePopoverLayer } from './PopoverLayer'
@@ -53,8 +53,11 @@ export function SettingsPopover() {
   const setExpandedUI = useThemeStore((s) => s.setExpandedUI)
   const defaultModel = useThemeStore((s) => s.defaultModel)
   const setDefaultModel = useThemeStore((s) => s.setDefaultModel)
+  const cliTerminal = useThemeStore((s) => s.cliTerminal)
+  const setCliTerminal = useThemeStore((s) => s.setCliTerminal)
   const isExpanded = useSessionStore((s) => s.isExpanded)
   const [modelMenuOpen, setModelMenuOpen] = useState(false)
+  const [cliMenuOpen, setCliMenuOpen] = useState(false)
   const popoverLayer = usePopoverLayer()
   const colors = useColors()
 
@@ -97,6 +100,7 @@ export function SettingsPopover() {
       if (triggerRef.current?.contains(target)) return
       if (popoverRef.current?.contains(target)) return
       setModelMenuOpen(false)
+      setCliMenuOpen(false)
       setOpen(false)
     }
     document.addEventListener('mousedown', handler)
@@ -276,6 +280,63 @@ export function SettingsPopover() {
                         }}
                       >
                         {m.label}
+                        {isSelected && <Check size={12} style={{ color: colors.accent }} />}
+                      </button>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+
+            <div style={{ height: 1, background: colors.popoverBorder }} />
+
+            {/* Open in CLI app */}
+            <div>
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2 min-w-0">
+                  <Terminal size={14} style={{ color: colors.textTertiary }} />
+                  <div className="text-[12px] font-medium" style={{ color: colors.textPrimary }}>
+                    Open in CLI
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setCliMenuOpen((o) => !o)}
+                  className="flex items-center gap-0.5 text-[11px] rounded-full px-2 py-0.5 transition-colors"
+                  style={{ color: colors.textSecondary, border: `1px solid ${colors.containerBorder}` }}
+                  aria-expanded={cliMenuOpen}
+                  aria-haspopup="listbox"
+                >
+                  {CLI_TERMINAL_OPTIONS.find((o) => o.id === cliTerminal)?.label ?? 'Terminal'}
+                  <CaretDown size={10} style={{ opacity: 0.6 }} />
+                </button>
+              </div>
+              {cliMenuOpen && (
+                <div
+                  className="mt-2 rounded-lg overflow-hidden"
+                  style={{ border: `1px solid ${colors.popoverBorder}` }}
+                  role="listbox"
+                >
+                  {CLI_TERMINAL_OPTIONS.map((o) => {
+                    const isSelected = cliTerminal === o.id
+                    return (
+                      <button
+                        key={o.id}
+                        type="button"
+                        role="option"
+                        aria-selected={isSelected}
+                        onClick={() => {
+                          setCliTerminal(o.id)
+                          setCliMenuOpen(false)
+                        }}
+                        className="w-full flex items-center justify-between px-2.5 py-1.5 text-[11px] transition-colors"
+                        style={{
+                          color: isSelected ? colors.textPrimary : colors.textSecondary,
+                          fontWeight: isSelected ? 600 : 400,
+                          background: isSelected ? colors.surfaceSecondary : 'transparent',
+                        }}
+                      >
+                        {o.label}
                         {isSelected && <Check size={12} style={{ color: colors.accent }} />}
                       </button>
                     )
