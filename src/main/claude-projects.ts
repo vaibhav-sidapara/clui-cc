@@ -1,11 +1,11 @@
-import { existsSync, mkdirSync, readdirSync, rmSync, statSync, unlinkSync } from 'fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, unlinkSync, writeFileSync } from 'fs'
 import { homedir } from 'os'
 import { join } from 'path'
 import { createInterface } from 'readline'
 import { createReadStream } from 'fs'
 import { encodeProjectPath } from './session-models'
 import { setSessionModel } from './session-models'
-import { getAllProjectLabels, setProjectLabel } from './project-labels'
+import { getAllProjectLabels, getProjectLabel, setProjectLabel } from './project-labels'
 
 export { encodeProjectPath }
 
@@ -27,13 +27,108 @@ export interface ClaudeSessionEntry {
 
 const SESSION_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
-/** Reverse Claude's path encoding: slashes → dashes (leading slash → leading dash). */
+const CLUI_PROJECT_META = 'clui-project-meta.json'
+
+function isValidAbsolutePath(path: string): boolean {
+  return path.startsWith('/') && !/[\0\r\n]/.test(path)
+}
+
+/** Lossy guess — wrong when folder names contain dashes (e.g. third-party). Prefer resolveProjectPath. */
 export function decodeProjectPath(encoded: string): string | null {
   if (!encoded || encoded.includes('.') || encoded === 'clui-models') return null
   if (!encoded.startsWith('-')) return null
   const path = '/' + encoded.slice(1).replace(/-/g, '/')
-  if (/[\0\r\n]/.test(path)) return null
+  if (!isValidAbsolutePath(path)) return null
   return path
+}
+
+function writeProjectPathMeta(projectDir: string, projectPath: string): void {
+  writeFileSync(
+    join(projectDir, CLUI_PROJECT_META),
+    JSON.stringify({ path: projectPath }, null, 2),
+  )
+}
+
+function readProjectPathMeta(projectDir: string): string | null {
+  const file = join(projectDir, CLUI_PROJECT_META)
+  if (!existsSync(file)) return null
+  try {
+    const parsed = JSON.parse(readFileSync(file, 'utf-8')) as { path?: unknown }
+    if (typeof parsed.path === 'string' && isValidAbsolutePath(parsed.path)) {
+      return parsed.path
+    }
+  } catch {}
+  return null
+}
+
+/** Read cwd fields from session JSONL — Claude stores the real path there. */
+function inferProjectPathFromSessions(projectDir: string): string | null {
+  const counts = new Map<string, number>()
+  let files: string[]
+  try {
+    files = readdirSync(projectDir).filter((f) => f.endsWith('.jsonl'))
+  } catch {
+    return null
+  }
+
+  for (const file of files) {
+    if (!SESSION_UUID_RE.test(file.replace(/\.jsonl$/, ''))) continue
+    try {
+      const raw = readFileSync(join(projectDir, file), 'utf-8')
+      const lines = raw.split('\n').slice(0, 80)
+      for (const line of lines) {
+        const trimmed = line.trim()
+        if (!trimmed) continue
+        try {
+          const obj = JSON.parse(trimmed) as { cwd?: unknown }
+          if (typeof obj.cwd === 'string' && isValidAbsolutePath(obj.cwd)) {
+            counts.set(obj.cwd, (counts.get(obj.cwd) || 0) + 1)
+          }
+        } catch {}
+      }
+    } catch {}
+  }
+
+  let best: string | null = null
+  let bestCount = 0
+  for (const [path, count] of counts) {
+    if (count > bestCount) {
+      best = path
+      bestCount = count
+    }
+  }
+  return best
+}
+
+/**
+ * Map ~/.claude/projects/<encoded-folder> to the real filesystem path.
+ * Claude's dash encoding is lossy; we use clui meta, then session cwd, then a best-effort decode.
+ */
+export function resolveProjectPath(encoded: string, projectDir?: string): string | null {
+  const dir = projectDir ?? join(projectsRoot(), encoded)
+  if (!existsSync(dir)) return null
+
+  const fromMeta = readProjectPathMeta(dir)
+  if (fromMeta) return fromMeta
+
+  const fromSessions = inferProjectPathFromSessions(dir)
+  if (fromSessions) {
+    try {
+      writeProjectPathMeta(dir, fromSessions)
+    } catch {}
+    return fromSessions
+  }
+
+  return decodeProjectPath(encoded)
+}
+
+/** Move a custom label from a wrong lossy-decoded path to the resolved path. */
+function maybeMigrateProjectLabel(lossyPath: string | null, resolvedPath: string): void {
+  if (!lossyPath || lossyPath === resolvedPath) return
+  const label = getProjectLabel(lossyPath)
+  if (!label || getProjectLabel(resolvedPath)) return
+  setProjectLabel(resolvedPath, label)
+  setProjectLabel(lossyPath, null)
 }
 
 function projectsRoot(): string {
@@ -135,12 +230,22 @@ function scanProjectSessions(encoded: string): { sessionCount: number; lastTimes
   }
 }
 
+function defaultProjectLabel(projectPath: string): string {
+  const parts = projectPath.replace(/\/$/, '').split('/').filter(Boolean)
+  return parts[parts.length - 1] || projectPath
+}
+
 /** Register a project folder under ~/.claude/projects/ (creates encoded dir if missing). */
 export function ensureProjectDirectory(projectPath: string): boolean {
   if (/[\0\r\n]/.test(projectPath) || !projectPath.startsWith('/')) return false
   try {
     const encoded = encodeProjectPath(projectPath)
-    mkdirSync(join(projectsRoot(), encoded), { recursive: true })
+    const projectDir = join(projectsRoot(), encoded)
+    mkdirSync(projectDir, { recursive: true })
+    writeProjectPathMeta(projectDir, projectPath)
+    if (!getProjectLabel(projectPath)) {
+      setProjectLabel(projectPath, defaultProjectLabel(projectPath))
+    }
     return true
   } catch {
     return false
@@ -162,8 +267,10 @@ export function listProjects(): ClaudeProjectEntry[] {
       continue
     }
 
-    const projectPath = decodeProjectPath(encoded)
+    const projectPath = resolveProjectPath(encoded, fullPath)
     if (!projectPath) continue
+
+    maybeMigrateProjectLabel(decodeProjectPath(encoded), projectPath)
 
     const { sessionCount, lastTimestamp } = scanProjectSessions(encoded)
     let dirMtime: string | null = null

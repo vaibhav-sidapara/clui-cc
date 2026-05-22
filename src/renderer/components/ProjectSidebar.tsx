@@ -8,39 +8,14 @@ import { ConfirmDialog } from './ConfirmDialog'
 import type { ClaudeProject } from '../../shared/types'
 
 const SIDEBAR_WIDTH = 176
-const PATH_TRUNCATE_LEN = 32
 
 function defaultProjectName(path: string): string {
-  const parts = path.split('/').filter(Boolean)
+  const parts = path.replace(/\/$/, '').split('/').filter(Boolean)
   return parts[parts.length - 1] || path
 }
 
 function projectDisplayName(project: ClaudeProject): string {
   return project.displayName?.trim() || defaultProjectName(project.path)
-}
-
-/** Compact path for sidebar: full path if short, else ../basename or .../parent/basename. */
-function formatPathShort(path: string, maxLen = PATH_TRUNCATE_LEN): string {
-  const normalized = path.replace(/\/$/, '') || path
-  if (normalized.length <= maxLen) return normalized
-
-  const parts = normalized.split('/').filter(Boolean)
-  if (parts.length === 0) return normalized
-
-  const base = parts[parts.length - 1]
-  const parentBase = `../${base}`
-  if (parentBase.length <= maxLen) return parentBase
-
-  if (parts.length >= 2) {
-    const parent = parts[parts.length - 2]
-    const withParent = `.../${parent}/${base}`
-    if (withParent.length <= maxLen) return withParent
-  }
-
-  if (base.length > maxLen - 3) {
-    return `...${base.slice(-(maxLen - 3))}`
-  }
-  return `.../${base}`
 }
 
 function formatAgo(iso: string | null): string {
@@ -108,7 +83,7 @@ export function ProjectSidebarToggle() {
       aria-label={sidebarOpen ? 'Collapse projects' : 'Expand projects'}
       style={{
         position: 'absolute',
-        left: sidebarOpen ? -10 : -5,
+        left: sidebarOpen ? -15 : -8,
         top: '50%',
         transform: 'translateY(-50%)',
         zIndex: 25,
@@ -145,7 +120,6 @@ function ProjectSidebarItem({
   const inputRef = useRef<HTMLInputElement>(null)
 
   const displayName = projectDisplayName(project)
-  const pathDisplay = formatPathShort(project.path)
 
   useEffect(() => {
     if (editing) {
@@ -226,17 +200,10 @@ function ProjectSidebarItem({
               <div
                 className="text-[12px] truncate font-medium"
                 style={{ color: isSelected ? colors.textPrimary : colors.textSecondary }}
-                title={displayName}
+                title={project.path}
                 onDoubleClick={startEditing}
               >
                 {displayName}
-              </div>
-              <div
-                className="text-[10px] mt-0.5 truncate"
-                style={{ color: colors.textTertiary }}
-                title={project.path}
-              >
-                {pathDisplay}
               </div>
               <div className="text-[10px] mt-0.5" style={{ color: colors.textTertiary }}>
                 {project.sessionCount === 0
