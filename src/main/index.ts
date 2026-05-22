@@ -315,11 +315,36 @@ function createWindow(): void {
   }
 }
 
+/** Bottom-center of the display that currently has the mouse cursor. */
+function positionWindowOnActiveDisplay(): void {
+  if (!mainWindow) return
+
+  const cursor = screen.getCursorScreenPoint()
+  const display = screen.getDisplayNearestPoint(cursor)
+  const { width: sw, height: sh } = display.workAreaSize
+  const { x: dx, y: dy } = display.workArea
+
+  const scaledWidth = Math.round(BAR_WIDTH * currentZoomFactor)
+  const scaledHeight = Math.round(PILL_HEIGHT * currentZoomFactor)
+
+  mainWindow.setBounds({
+    x: dx + Math.round((sw - scaledWidth) / 2),
+    y: dy + sh - scaledHeight - PILL_BOTTOM_MARGIN,
+    width: scaledWidth,
+    height: scaledHeight,
+  })
+  lastWindowBounds = mainWindow.getBounds()
+}
+
 function showWindow(source = 'unknown'): void {
   if (!mainWindow) return
   const toggleId = ++toggleSequence
 
-  if (lastWindowBounds) {
+  // Global shortcut: open on the display where the user pressed it.
+  const followCursor = source.includes('shortcut')
+  if (followCursor) {
+    positionWindowOnActiveDisplay()
+  } else if (lastWindowBounds) {
     mainWindow.setBounds(lastWindowBounds)
   }
 
@@ -345,23 +370,7 @@ function showWindow(source = 'unknown'): void {
 }
 
 function resetWindowPosition(): void {
-  if (!mainWindow) return
-
-  const cursor = screen.getCursorScreenPoint()
-  const display = screen.getDisplayNearestPoint(cursor)
-  const { width: sw, height: sh } = display.workAreaSize
-  const { x: dx, y: dy } = display.workArea
-
-  const scaledWidth = Math.round(BAR_WIDTH * currentZoomFactor)
-  const scaledHeight = Math.round(PILL_HEIGHT * currentZoomFactor)
-
-  mainWindow.setBounds({
-    x: dx + Math.round((sw - scaledWidth) / 2),
-    y: dy + sh - scaledHeight - PILL_BOTTOM_MARGIN,
-    width: scaledWidth,
-    height: scaledHeight,
-  })
-  lastWindowBounds = mainWindow.getBounds()
+  positionWindowOnActiveDisplay()
 }
 
 function toggleWindow(source = 'unknown'): void {
