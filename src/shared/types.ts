@@ -172,6 +172,10 @@ export interface TabState {
   hasChosenDirectory: boolean
   /** Extra directories accessible via --add-dir (session-preserving) */
   additionalDirs: string[]
+  /** False for session tabs until JSONL history is loaded on first select */
+  historyLoaded: boolean
+  /** True while session history is being read from disk */
+  historyLoading: boolean
 }
 
 export interface Message {

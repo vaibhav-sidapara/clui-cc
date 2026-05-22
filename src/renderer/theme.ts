@@ -5,6 +5,7 @@
 import { create } from 'zustand'
 import { DEFAULT_MODEL_ID, isKnownModelId } from './models'
 import type { CliTerminalApp } from '../shared/types'
+import { rgba } from 'framer-motion'
 
 export type { CliTerminalApp }
 
@@ -50,6 +51,10 @@ const darkColors = {
   accent: '#d97757',
   accentLight: 'rgba(217, 119, 87, 0.1)',
   accentSoft: 'rgba(217, 119, 87, 0.15)',
+
+  // Sidebar / chat slide toggles (chevrons on panel edges)
+  slideToggle: '#d97757',
+  slideToggleSoft: 'rgba(217, 119, 87, 0.4)',
 
   // Status dots
   statusIdle: '#8a8a80',
@@ -184,6 +189,8 @@ const lightColors = {
   accent: '#d97757',
   accentLight: 'rgba(217, 119, 87, 0.1)',
   accentSoft: 'rgba(217, 119, 87, 0.12)',
+
+  slideToggle: '#c15f3c',
 
   // Status dots
   statusIdle: '#8a8a80',

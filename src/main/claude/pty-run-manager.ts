@@ -22,6 +22,7 @@ import { execSync } from 'child_process'
 import { appendFileSync, chmodSync, existsSync, statSync } from 'fs'
 import type { NormalizedEvent, RunOptions, EnrichedError } from '../../shared/types'
 import { getCliEnv } from '../cli-env'
+import { resolveClaudeBinary, resolveSpawnCwd } from '../resolve-claude-binary'
 
 // node-pty is a native module — require at runtime to avoid Vite bundling issues
 // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -275,13 +276,15 @@ export interface PtyRunHandle {
 export class PtyRunManager extends EventEmitter {
   private activeRuns = new Map<string, PtyRunHandle>()
   private _finishedRuns = new Map<string, PtyRunHandle>()
-  private claudeBinary: string
 
   constructor() {
     super()
-    this.claudeBinary = this._findClaudeBinary()
     this._ensureSpawnHelperExecutable()
-    log(`Claude binary: ${this.claudeBinary}`)
+    try {
+      log(`Claude binary: ${resolveClaudeBinary()}`)
+    } catch (err) {
+      log(`Claude binary: not found (${(err as Error).message})`)
+    }
   }
 
   /**
@@ -310,35 +313,16 @@ export class PtyRunManager extends EventEmitter {
     }
   }
 
-  private _findClaudeBinary(): string {
-    const candidates = [
-      '/usr/local/bin/claude',
-      '/opt/homebrew/bin/claude',
-      join(homedir(), '.npm-global/bin/claude'),
-    ]
-
-    for (const c of candidates) {
-      try {
-        execSync(`test -x "${c}"`, { stdio: 'ignore' })
-        return c
-      } catch {}
-    }
-
-    try {
-      return execSync('/bin/zsh -ilc "whence -p claude"', { encoding: 'utf-8', env: getCliEnv() }).trim()
-    } catch {}
-
-    try {
-      return execSync('/bin/bash -lc "which claude"', { encoding: 'utf-8', env: getCliEnv() }).trim()
-    } catch {}
-
-    return 'claude'
+  private _claudeBinary(): string {
+    return resolveClaudeBinary()
   }
 
   private _getEnv(): NodeJS.ProcessEnv {
     const env = getCliEnv()
-    const binDir = this.claudeBinary.substring(0, this.claudeBinary.lastIndexOf('/'))
-    if (env.PATH && !env.PATH.includes(binDir)) {
+    const binary = this._claudeBinary()
+    const slash = binary.lastIndexOf('/')
+    const binDir = slash >= 0 ? binary.substring(0, slash) : ''
+    if (binDir && env.PATH && !env.PATH.includes(binDir)) {
       env.PATH = `${binDir}:${env.PATH}`
     }
 
@@ -350,7 +334,7 @@ export class PtyRunManager extends EventEmitter {
       throw new Error('node-pty is not available — cannot use PTY transport')
     }
 
-    const cwd = options.projectPath === '~' ? homedir() : options.projectPath
+    const cwd = resolveSpawnCwd(options.projectPath)
 
     // Build args for interactive mode (no -p flag)
     const args: string[] = [
@@ -373,10 +357,11 @@ export class PtyRunManager extends EventEmitter {
     // Pass prompt as positional argument
     args.push(options.prompt)
 
-    log(`Starting PTY run ${requestId}: ${this.claudeBinary} ${args.join(' ')}`)
+    const claudeBinary = this._claudeBinary()
+    log(`Starting PTY run ${requestId}: ${claudeBinary} ${args.join(' ')}`)
     log(`Prompt: ${options.prompt.substring(0, 200)}`)
 
-    const ptyProcess = pty.spawn(this.claudeBinary, args, {
+    const ptyProcess = pty.spawn(claudeBinary, args, {
       name: 'xterm-256color',
       cols: 120,
       rows: 40,

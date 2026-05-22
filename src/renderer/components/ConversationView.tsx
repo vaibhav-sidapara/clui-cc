@@ -143,6 +143,10 @@ export function ConversationView() {
   const isFailed = tab.status === 'failed'
   const showInterrupt = isRunning && tab.messages.some((m) => m.role === 'user')
 
+  if (tab.historyLoading || (!tab.historyLoaded && tab.claudeSessionId)) {
+    return <HistoryLoadingState height={conversationHeight} />
+  }
+
   if (tab.messages.length === 0) {
     if (tab.hasChosenDirectory && tab.workingDirectory && tab.workingDirectory !== '~') {
       return <ProjectReadyEmptyState height={conversationHeight} projectPath={tab.workingDirectory} />
@@ -297,6 +301,23 @@ export function ConversationView() {
           </AnimatePresence>
         </div>
       </div>
+    </div>
+  )
+}
+
+function HistoryLoadingState({ height }: { height: number }) {
+  const colors = useColors()
+
+  return (
+    <div
+      data-clui-ui
+      className="flex flex-col items-center justify-center px-6 text-center flex-shrink-0"
+      style={{ height, minHeight: height }}
+    >
+      <SpinnerGap size={22} className="animate-spin" style={{ color: colors.textTertiary }} />
+      <p className="text-[12px] mt-3" style={{ color: colors.textTertiary }}>
+        Loading session…
+      </p>
     </div>
   )
 }

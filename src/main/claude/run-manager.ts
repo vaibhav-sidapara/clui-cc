@@ -1,11 +1,18 @@
-import { spawn, execSync, ChildProcess } from 'child_process'
+import { spawn, ChildProcess } from 'child_process'
 import { EventEmitter } from 'events'
 import { homedir } from 'os'
 import { join } from 'path'
 import { StreamParser } from '../stream-parser'
 import { normalize } from './event-normalizer'
+import {
+  isRateLimitAssistantEvent,
+  resolveErrorMessage,
+  textFromAssistantPayload,
+  assistantMessagePayload,
+} from './stream-errors'
 import { log as _log } from '../logger'
 import { getCliEnv } from '../cli-env'
+import { invalidateClaudeBinaryCache, resolveClaudeBinary, resolveSpawnCwd } from '../resolve-claude-binary'
 import type { ClaudeEvent, NormalizedEvent, RunOptions, EnrichedError } from '../../shared/types'
 
 const MAX_RING_LINES = 100
@@ -76,6 +83,8 @@ export interface RunHandle {
   sawPermissionRequest: boolean
   /** Permission denials from result event */
   permissionDenials: Array<{ tool_name: string; tool_use_id: string }>
+  /** Latest session/rate-limit text from an assistant event (stream-json) */
+  lastRateLimitMessage?: string
 }
 
 /**
@@ -92,43 +101,25 @@ export class RunManager extends EventEmitter {
   private activeRuns = new Map<string, RunHandle>()
   /** Holds recently-finished runs so diagnostics survive past process exit */
   private _finishedRuns = new Map<string, RunHandle>()
-  private claudeBinary: string
-
   constructor() {
     super()
-    this.claudeBinary = this._findClaudeBinary()
-    log(`Claude binary: ${this.claudeBinary}`)
+    try {
+      log(`Claude binary: ${resolveClaudeBinary()}`)
+    } catch (err) {
+      log(`Claude binary: not found (${(err as Error).message})`)
+    }
   }
 
-  private _findClaudeBinary(): string {
-    const candidates = [
-      '/usr/local/bin/claude',
-      '/opt/homebrew/bin/claude',
-      join(homedir(), '.npm-global/bin/claude'),
-    ]
-
-    for (const c of candidates) {
-      try {
-        execSync(`test -x "${c}"`, { stdio: 'ignore' })
-        return c
-      } catch {}
-    }
-
-    try {
-      return execSync('/bin/zsh -ilc "whence -p claude"', { encoding: 'utf-8', env: getCliEnv() }).trim()
-    } catch {}
-
-    try {
-      return execSync('/bin/bash -lc "which claude"', { encoding: 'utf-8', env: getCliEnv() }).trim()
-    } catch {}
-
-    return 'claude'
+  private _claudeBinary(): string {
+    return resolveClaudeBinary()
   }
 
   private _getEnv(): NodeJS.ProcessEnv {
     const env = getCliEnv()
-    const binDir = this.claudeBinary.substring(0, this.claudeBinary.lastIndexOf('/'))
-    if (env.PATH && !env.PATH.includes(binDir)) {
+    const binary = this._claudeBinary()
+    const slash = binary.lastIndexOf('/')
+    const binDir = slash >= 0 ? binary.substring(0, slash) : ''
+    if (binDir && env.PATH && !env.PATH.includes(binDir)) {
       env.PATH = `${binDir}:${env.PATH}`
     }
 
@@ -136,7 +127,11 @@ export class RunManager extends EventEmitter {
   }
 
   startRun(requestId: string, options: RunOptions): RunHandle {
-    const cwd = options.projectPath === '~' ? homedir() : options.projectPath
+    const requestedCwd = options.projectPath === '~' ? homedir() : (options.projectPath || homedir())
+    const cwd = resolveSpawnCwd(options.projectPath)
+    if (cwd !== requestedCwd) {
+      log(`Project directory not found (${options.projectPath}), using ${cwd}`)
+    }
 
     const args: string[] = [
       '-p',
@@ -191,13 +186,14 @@ export class RunManager extends EventEmitter {
     args.push('--append-system-prompt', CLUI_SYSTEM_HINT)
 
     if (DEBUG) {
-      log(`Starting run ${requestId}: ${this.claudeBinary} ${args.join(' ')}`)
+      log(`Starting run ${requestId}: ${this._claudeBinary()} ${args.join(' ')}`)
       log(`Prompt: ${options.prompt.substring(0, 200)}`)
     } else {
       log(`Starting run ${requestId}`)
     }
 
-    const child = spawn(this.claudeBinary, args, {
+    const claudeBinary = this._claudeBinary()
+    const child = spawn(claudeBinary, args, {
       stdio: ['pipe', 'pipe', 'pipe'],
       cwd,
       env: this._getEnv(),
@@ -251,10 +247,24 @@ export class RunManager extends EventEmitter {
       // Emit raw event for debugging
       this.emit('raw', requestId, raw)
 
+      if (raw.type === 'assistant') {
+        const payload = assistantMessagePayload(raw)
+        const text = textFromAssistantPayload(payload)
+        if (text && (isRateLimitAssistantEvent(raw) || /session limit|rate limit/i.test(text))) {
+          handle.lastRateLimitMessage = text
+        }
+      }
+
       // Normalize and emit canonical events
       const normalized = normalize(raw)
       for (const evt of normalized) {
         if (evt.type === 'tool_call') handle.toolCallCount++
+        if (evt.type === 'error') {
+          evt.message = resolveErrorMessage(evt.message, {
+            lastRateLimitMessage: handle.lastRateLimitMessage,
+            stdoutTail: handle.stdoutTail,
+          })
+        }
         this.emit('normalized', requestId, evt)
       }
 
@@ -294,6 +304,9 @@ export class RunManager extends EventEmitter {
     })
 
     child.on('error', (err) => {
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+        invalidateClaudeBinaryCache()
+      }
       log(`Process error [${requestId}]: ${err.message}`)
       this._finishedRuns.set(requestId, handle)
       this.activeRuns.delete(requestId)
@@ -359,8 +372,12 @@ export class RunManager extends EventEmitter {
    */
   getEnrichedError(requestId: string, exitCode: number | null): EnrichedError {
     const handle = this.activeRuns.get(requestId) || this._finishedRuns.get(requestId)
+    const message = resolveErrorMessage('', {
+      lastRateLimitMessage: handle?.lastRateLimitMessage,
+      stdoutTail: handle?.stdoutTail,
+    })
     return {
-      message: `Run failed with exit code ${exitCode}`,
+      message: message || `Run failed with exit code ${exitCode}`,
       stderrTail: handle?.stderrTail.slice(-20) || [],
       stdoutTail: handle?.stdoutTail.slice(-20) || [],
       exitCode,

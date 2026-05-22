@@ -84,6 +84,7 @@ interface State {
   createTab: () => Promise<string>
   selectTab: (tabId: string) => void
   closeTab: (tabId: string) => void
+  ensureTabHistoryLoaded: (tabId: string) => Promise<void>
   clearTab: () => void
   toggleExpanded: () => void
   toggleMarketplace: () => void
@@ -153,6 +154,8 @@ function makeLocalTab(): TabState {
     workingDirectory: '~',
     hasChosenDirectory: false,
     additionalDirs: [],
+    historyLoaded: true,
+    historyLoading: false,
   }
 }
 
@@ -165,10 +168,8 @@ function sessionTabTitle(session: SessionMeta): string {
   return 'Session'
 }
 
-async function openSessionAsTab(session: SessionMeta, projectPath: string): Promise<TabState> {
+async function createSessionTabStub(session: SessionMeta, projectPath: string): Promise<TabState> {
   const { tabId } = await window.clui.createTab()
-  const messages = await loadTabHistory(session.sessionId, projectPath)
-  const modelOverride = await loadSessionModelOverride(session.sessionId, projectPath)
   return {
     ...makeLocalTab(),
     id: tabId,
@@ -176,8 +177,9 @@ async function openSessionAsTab(session: SessionMeta, projectPath: string): Prom
     title: sessionTabTitle(session),
     workingDirectory: projectPath,
     hasChosenDirectory: true,
-    modelOverride,
-    messages,
+    historyLoaded: false,
+    historyLoading: false,
+    messages: [],
   }
 }
 
@@ -302,20 +304,74 @@ export const useSessionStore = create<State>((set, get) => ({
     if (sessions.length === 0) {
       tabs.push(await createEmptyProjectTab(projectPath))
     } else {
-      for (const session of sessions) {
-        tabs.push(await openSessionAsTab(session, projectPath))
-      }
+      const stubs = await Promise.all(
+        sessions.map((session) => createSessionTabStub(session, projectPath)),
+      )
+      tabs.push(...stubs)
     }
+    const activeTabId = tabs[0]?.id ?? ''
     set({
       selectedProjectPath: projectPath,
       tabs,
-      activeTabId: tabs[0]?.id ?? '',
+      activeTabId,
       isExpanded: true,
       marketplaceOpen: false,
     })
     saveSidebarState({ open: get().sidebarOpen, selectedProjectPath: projectPath })
     tabPersistenceEnabled = true
-    if (tabs.length > 0) saveOpenTabs(tabs, tabs[0].id)
+    if (tabs.length > 0) saveOpenTabs(tabs, activeTabId)
+    if (activeTabId) void get().ensureTabHistoryLoaded(activeTabId)
+  },
+
+  ensureTabHistoryLoaded: async (tabId) => {
+    const { tabs, selectedProjectPath } = get()
+    const tab = tabs.find((t) => t.id === tabId)
+    if (!tab || tab.historyLoaded || tab.historyLoading || !tab.claudeSessionId) return
+
+    const projectPath =
+      tab.workingDirectory && tab.workingDirectory !== '~'
+        ? tab.workingDirectory
+        : selectedProjectPath
+    if (!projectPath?.startsWith('/')) {
+      set((s) => ({
+        tabs: s.tabs.map((t) =>
+          t.id === tabId ? { ...t, historyLoaded: true, historyLoading: false } : t,
+        ),
+      }))
+      return
+    }
+
+    set((s) => ({
+      tabs: s.tabs.map((t) =>
+        t.id === tabId ? { ...t, historyLoading: true } : t,
+      ),
+    }))
+
+    try {
+      const [messages, modelOverride] = await Promise.all([
+        loadTabHistory(tab.claudeSessionId, projectPath),
+        loadSessionModelOverride(tab.claudeSessionId, projectPath),
+      ])
+      set((s) => ({
+        tabs: s.tabs.map((t) =>
+          t.id === tabId
+            ? {
+                ...t,
+                messages,
+                modelOverride: modelOverride ?? t.modelOverride,
+                historyLoaded: true,
+                historyLoading: false,
+              }
+            : t,
+        ),
+      }))
+    } catch {
+      set((s) => ({
+        tabs: s.tabs.map((t) =>
+          t.id === tabId ? { ...t, historyLoaded: true, historyLoading: false } : t,
+        ),
+      }))
+    }
   },
 
   deleteActiveSession: async () => {
@@ -391,6 +447,7 @@ export const useSessionStore = create<State>((set, get) => ({
           t.id === tabId ? { ...t, hasUnread: false } : t
         ),
       }))
+      void get().ensureTabHistoryLoaded(tabId)
     }
   },
 
@@ -557,6 +614,8 @@ export const useSessionStore = create<State>((set, get) => ({
         hasChosenDirectory: !!projectPath,
         messages,
         modelOverride: savedModel,
+        historyLoaded: true,
+        historyLoading: false,
       }
       set((s) => ({
         tabs: [...s.tabs, tab],
@@ -992,17 +1051,31 @@ export const useSessionStore = create<State>((set, get) => ({
             playNotificationIfHidden()
             break
 
-          case 'error':
+          case 'error': {
             updated.status = 'failed'
             updated.activeRequestId = null
             updated.currentActivity = ''
             updated.permissionQueue = []
             updated.permissionDenied = null
-            updated.messages = [
-              ...updated.messages,
-              { id: nextMsgId(), role: 'system', content: `Error: ${event.message}`, timestamp: Date.now() },
-            ]
+            const last = updated.messages[updated.messages.length - 1]
+            const limitAlreadyShown =
+              last?.role === 'assistant' &&
+              /session limit|rate limit|usage limit/i.test(last.content)
+            if (!limitAlreadyShown) {
+              updated.messages = [
+                ...updated.messages,
+                {
+                  id: nextMsgId(),
+                  role: 'system',
+                  content: event.message.startsWith('Error:')
+                    ? event.message
+                    : `Error: ${event.message}`,
+                  timestamp: Date.now(),
+                },
+              ]
+            }
             break
+          }
 
           case 'session_dead':
             updated.status = 'dead'
@@ -1038,19 +1111,30 @@ export const useSessionStore = create<State>((set, get) => ({
             break
           }
 
-          case 'rate_limit':
+          case 'rate_limit': {
             if (event.status !== 'allowed') {
-              updated.messages = [
-                ...updated.messages,
-                {
-                  id: nextMsgId(),
-                  role: 'system',
-                  content: `Rate limited (${event.rateLimitType}). Resets at ${new Date(event.resetsAt).toLocaleTimeString()}.`,
-                  timestamp: Date.now(),
-                },
-              ]
+              const lastRl = updated.messages[updated.messages.length - 1]
+              const limitAlreadyShown =
+                lastRl?.role === 'assistant' &&
+                /session limit|rate limit|usage limit/i.test(lastRl.content)
+              if (!limitAlreadyShown) {
+                const resetHint =
+                  event.resetsAt > 0
+                    ? ` Resets at ${new Date(event.resetsAt).toLocaleTimeString()}.`
+                    : ''
+                updated.messages = [
+                  ...updated.messages,
+                  {
+                    id: nextMsgId(),
+                    role: 'system',
+                    content: `Rate limited (${event.rateLimitType}).${resetHint}`,
+                    timestamp: Date.now(),
+                  },
+                ]
+              }
             }
             break
+          }
         }
 
         return updated

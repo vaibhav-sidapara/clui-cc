@@ -252,7 +252,7 @@ export default function App() {
             className="overflow-hidden flex flex-row drag-region"
             animate={{
               width: isExpanded ? cardExpandedWidth : cardCollapsedWidth,
-              marginBottom: isExpanded ? 10 : -14,
+              marginBottom: isExpanded ? 10 : -23,
               marginLeft: isExpanded ? 0 : cardCollapsedMargin,
               marginRight: isExpanded ? 0 : cardCollapsedMargin,
               background: isExpanded ? colors.containerBg : colors.containerBgCollapsed,

@@ -9,6 +9,11 @@ import type {
   PermissionEvent,
   ContentDelta,
 } from '../../shared/types'
+import {
+  assistantMessagePayload,
+  extractResultErrorMessage,
+  isRateLimitAssistantEvent,
+} from './stream-errors'
 
 /**
  * Maps raw Claude stream-json events to canonical CLUI events.
@@ -109,17 +114,31 @@ function normalizeStreamEvent(event: StreamEvent): NormalizedEvent[] {
 }
 
 function normalizeAssistant(event: AssistantEvent): NormalizedEvent[] {
-  return [{
+  const payload = assistantMessagePayload(event) ?? event.message
+  const events: NormalizedEvent[] = [{
     type: 'task_update',
-    message: event.message,
+    message: payload,
   }]
+
+  if (isRateLimitAssistantEvent(event)) {
+    const raw = event as Record<string, unknown>
+    events.push({
+      type: 'rate_limit',
+      status: 'blocked',
+      resetsAt: 0,
+      rateLimitType: typeof raw.error === 'string' ? raw.error : 'rate_limit',
+    })
+  }
+
+  return events
 }
 
 function normalizeResult(event: ResultEvent): NormalizedEvent[] {
   if (event.is_error || event.subtype === 'error') {
+    const message = extractResultErrorMessage(event) || 'Unknown error'
     return [{
       type: 'error',
-      message: event.result || 'Unknown error',
+      message,
       isError: true,
       sessionId: event.session_id,
     }]

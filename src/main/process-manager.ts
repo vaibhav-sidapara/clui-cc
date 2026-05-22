@@ -5,6 +5,7 @@ import { appendFileSync } from 'fs'
 import { join } from 'path'
 import { StreamParser } from './stream-parser'
 import { getCliEnv } from './cli-env'
+import { resolveClaudeBinary, resolveSpawnCwd } from './resolve-claude-binary'
 import type { ClaudeEvent, RunOptions } from '../shared/types'
 
 const LOG_FILE = join(homedir(), '.clui-debug.log')
@@ -26,49 +27,18 @@ export interface RunHandle {
  */
 export class ProcessManager extends EventEmitter {
   private activeRuns = new Map<string, RunHandle>()
-  private claudeBinary: string
-
   constructor() {
     super()
-    // Find the real claude binary — Electron doesn't inherit shell aliases or full PATH
-    this.claudeBinary = this.findClaudeBinary()
-    log(`Claude binary: ${this.claudeBinary}`)
-  }
-
-  private findClaudeBinary(): string {
-    // Try common locations
-    const candidates = [
-      '/usr/local/bin/claude',
-      '/opt/homebrew/bin/claude',
-      join(homedir(), '.npm-global/bin/claude'),
-      join(homedir(), '.nvm/versions/node', '**', 'bin/claude'),
-    ]
-
-    for (const c of candidates) {
-      try {
-        execSync(`test -x "${c}"`, { stdio: 'ignore' })
-        return c
-      } catch {}
+    try {
+      log(`Claude binary: ${resolveClaudeBinary()}`)
+    } catch (err) {
+      log(`Claude binary: not found (${(err as Error).message})`)
     }
-
-    // Fallback: ask a login shell
-    try {
-      const result = execSync('/bin/zsh -ilc "whence -p claude"', { encoding: 'utf-8', env: getCliEnv() }).trim()
-      if (result) return result
-    } catch {}
-
-    try {
-      const result = execSync('/bin/bash -lc "which claude"', { encoding: 'utf-8', env: getCliEnv() }).trim()
-      if (result) return result
-    } catch {}
-
-    // Last resort
-    return 'claude'
   }
 
   startRun(options: RunOptions): RunHandle {
     const runId = crypto.randomUUID()
-    const cwd = options.projectPath === '~' ? homedir() : options.projectPath
+    const cwd = resolveSpawnCwd(options.projectPath)
 
     const args: string[] = [
       '-p',
@@ -99,7 +69,8 @@ export class ProcessManager extends EventEmitter {
       args.push('--system-prompt', options.systemPrompt)
     }
 
-    log(`Starting run ${runId}: ${this.claudeBinary} ${args.join(' ')}`)
+    const claudeBinary = resolveClaudeBinary()
+    log(`Starting run ${runId}: ${claudeBinary} ${args.join(' ')}`)
     log(`Prompt: ${options.prompt.substring(0, 200)}`)
 
     // Build environment: merge login shell PATH with Electron's env
@@ -107,12 +78,13 @@ export class ProcessManager extends EventEmitter {
     const env = getCliEnv()
 
     // Ensure our claude binary's directory is in PATH
-    const binDir = this.claudeBinary.substring(0, this.claudeBinary.lastIndexOf('/'))
-    if (env.PATH && !env.PATH.includes(binDir)) {
+    const slash = claudeBinary.lastIndexOf('/')
+    const binDir = slash >= 0 ? claudeBinary.substring(0, slash) : ''
+    if (binDir && env.PATH && !env.PATH.includes(binDir)) {
       env.PATH = `${binDir}:${env.PATH}`
     }
 
-    const child = spawn(this.claudeBinary, args, {
+    const child = spawn(claudeBinary, args, {
       stdio: ['pipe', 'pipe', 'pipe'],
       cwd,
       env,

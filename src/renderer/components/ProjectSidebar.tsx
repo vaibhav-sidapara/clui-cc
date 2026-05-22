@@ -69,15 +69,23 @@ export function ChatCollapseButton() {
       title={isExpanded ? 'Collapse chat window' : 'Expand chat window'}
       aria-label={isExpanded ? 'Collapse chat window' : 'Expand chat window'}
       style={{
-        width: 28,
-        height: 16,
-        color: colors.textTertiary,
+        position: 'absolute',
+        top: isExpanded ? -1 : -1,
+        left: '50%',
+        transform: 'translateX(-50%)',
+        zIndex: 25,
+        width: 80,
+        height: 18,
+        color: colors.slideToggle,
+        boxShadow: colors.cardShadow,
+        borderRadius: 10,
+        border: `1px solid ${colors.slideToggleSoft}`,
       }}
     >
       {isExpanded ? (
-        <CaretDown size={12} weight="bold" />
+        <CaretDown size={14} weight="bold" />
       ) : (
-        <CaretUp size={12} weight="bold" />
+        <CaretUp size={14} weight="bold" />
       )}
     </button>
   )
@@ -99,17 +107,17 @@ export function ProjectSidebarToggle() {
       aria-label={sidebarOpen ? 'Collapse projects' : 'Expand projects'}
       style={{
         position: 'absolute',
-        left: -11,
+        left: sidebarOpen ? -10 : -5,
         top: '50%',
         transform: 'translateY(-50%)',
         zIndex: 25,
-        width: 22,
-        height: 40,
+        width: 18,
+        height: 70,
         borderRadius: 10,
         background: colors.containerBg,
-        border: `1px solid ${colors.containerBorder}`,
+        border: `1px solid ${colors.slideToggleSoft}`,
         boxShadow: colors.cardShadowCollapsed,
-        color: colors.textTertiary,
+        color: colors.slideToggle,
       }}
     >
       {sidebarOpen ? <CaretLeft size={14} weight="bold" /> : <CaretRight size={14} weight="bold" />}
@@ -162,84 +170,89 @@ function ProjectSidebarItem({
     setEditing(true)
   }
 
+  const handleOpenKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault()
+      onOpen()
+    }
+  }
+
   return (
     <div
-      className="rounded-lg mb-0.5 transition-colors"
+      className="rounded-lg mb-0.5 transition-colors flex items-start gap-1 px-2 py-2"
       style={{
         background: isSelected ? colors.tabActive : 'transparent',
         border: isSelected ? `1px solid ${colors.tabActiveBorder}` : '1px solid transparent',
       }}
     >
-      <button
-        type="button"
-        onClick={onOpen}
-        className="clui-pointer w-full text-left rounded-lg px-2 py-2"
-      >
-        <div className="flex items-start gap-1.5 min-w-0">
-          <Folder size={13} className="flex-shrink-0 mt-0.5" style={{ color: colors.textTertiary }} />
-          <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-1 min-w-0">
-              {editing ? (
-                <input
-                  ref={inputRef}
-                  data-clui-ui
-                  value={draft}
-                  onChange={(e) => setDraft(e.target.value)}
-                  onClick={(e) => e.stopPropagation()}
-                  onMouseDown={(e) => e.stopPropagation()}
-                  onKeyDown={(e) => {
-                    e.stopPropagation()
-                    if (e.key === 'Enter') commitRename()
-                    if (e.key === 'Escape') setEditing(false)
-                  }}
-                  onBlur={commitRename}
-                  className="flex-1 min-w-0 text-[12px] font-medium rounded px-1 py-0.5 outline-none"
-                  style={{
-                    color: colors.textPrimary,
-                    background: colors.surfaceSecondary,
-                    border: `1px solid ${colors.tabActiveBorder}`,
-                  }}
-                />
-              ) : (
-                <>
-                  <div
-                    className="text-[12px] truncate font-medium flex-1 min-w-0"
-                    style={{ color: isSelected ? colors.textPrimary : colors.textSecondary }}
-                    title={displayName}
-                    onDoubleClick={startEditing}
-                  >
-                    {displayName}
-                  </div>
-                  <button
-                    type="button"
-                    data-clui-ui
-                    onClick={startEditing}
-                    className="clui-pointer flex-shrink-0 p-0.5 rounded opacity-60 hover:opacity-100 transition-opacity"
-                    style={{ color: colors.textTertiary }}
-                    title="Rename project"
-                    aria-label="Rename project"
-                  >
-                    <PencilSimple size={11} />
-                  </button>
-                </>
-              )}
-            </div>
+      <div className="flex items-start gap-1.5 min-w-0 flex-1 text-left">
+        <Folder size={13} className="flex-shrink-0 mt-0.5" style={{ color: colors.textTertiary }} />
+        <div className="min-w-0 flex-1">
+          {editing ? (
+            <input
+              ref={inputRef}
+              data-clui-ui
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') commitRename()
+                if (e.key === 'Escape') setEditing(false)
+              }}
+              onBlur={commitRename}
+              className="w-full text-[12px] font-medium rounded px-1 py-0.5 outline-none"
+              style={{
+                color: colors.textPrimary,
+                background: colors.surfaceSecondary,
+                border: `1px solid ${colors.tabActiveBorder}`,
+              }}
+            />
+          ) : (
             <div
-              className="text-[10px] mt-0.5 truncate"
-              style={{ color: colors.textTertiary }}
-              title={project.path}
+              data-clui-ui
+              role="button"
+              tabIndex={0}
+              onClick={onOpen}
+              onKeyDown={handleOpenKeyDown}
+              className="clui-pointer"
             >
-              {pathDisplay}
+              <div
+                className="text-[12px] truncate font-medium"
+                style={{ color: isSelected ? colors.textPrimary : colors.textSecondary }}
+                title={displayName}
+                onDoubleClick={startEditing}
+              >
+                {displayName}
+              </div>
+              <div
+                className="text-[10px] mt-0.5 truncate"
+                style={{ color: colors.textTertiary }}
+                title={project.path}
+              >
+                {pathDisplay}
+              </div>
+              <div className="text-[10px] mt-0.5" style={{ color: colors.textTertiary }}>
+                {project.sessionCount === 0
+                  ? 'No sessions'
+                  : `${project.sessionCount} session${project.sessionCount === 1 ? '' : 's'}`}
+                {project.lastTimestamp ? ` · ${formatAgo(project.lastTimestamp)}` : ''}
+              </div>
             </div>
-            <div className="text-[10px] mt-0.5" style={{ color: colors.textTertiary }}>
-              {project.sessionCount === 0
-                ? 'No sessions'
-                : `${project.sessionCount} session${project.sessionCount === 1 ? '' : 's'}`}
-              {project.lastTimestamp ? ` · ${formatAgo(project.lastTimestamp)}` : ''}
-            </div>
-          </div>
+          )}
         </div>
-      </button>
+      </div>
+      {!editing && (
+        <button
+          type="button"
+          data-clui-ui
+          onClick={startEditing}
+          className="clui-pointer flex-shrink-0 p-0.5 rounded mt-0.5 opacity-60 hover:opacity-100 transition-opacity"
+          style={{ color: colors.textTertiary }}
+          title="Rename project"
+          aria-label="Rename project"
+        >
+          <PencilSimple size={11} />
+        </button>
+      )}
     </div>
   )
 }
