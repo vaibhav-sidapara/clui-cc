@@ -10,7 +10,7 @@ import { log as _log, LOG_FILE, flushLogs } from './logger'
 import { getCliEnv } from './cli-env'
 import { IPC } from '../shared/types'
 import { getSessionModel, setSessionModel } from './session-models'
-import { listProjects, listSessionsForProject, deleteSession, ensureProjectDirectory } from './claude-projects'
+import { listProjects, listSessionsForProject, deleteSession, deleteProject, ensureProjectDirectory } from './claude-projects'
 import { setProjectLabel } from './project-labels'
 import { buildCliCommand, buildOpenTerminalAppleScript } from './open-terminal'
 import type { CliTerminalApp } from '../shared/types'
@@ -595,6 +595,16 @@ ipcMain.handle(IPC.DELETE_SESSION, (_e, arg: { sessionId: string; projectPath: s
   const { sessionId, projectPath } = arg
   log(`IPC DELETE_SESSION ${sessionId} (${projectPath})`)
   return deleteSession(projectPath, sessionId)
+})
+
+ipcMain.handle(IPC.DELETE_PROJECT, (_e, projectPath: string) => {
+  log(`IPC DELETE_PROJECT ${projectPath}`)
+  try {
+    return deleteProject(projectPath)
+  } catch (err) {
+    log(`DELETE_PROJECT error: ${err}`)
+    return false
+  }
 })
 
 const SESSION_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i

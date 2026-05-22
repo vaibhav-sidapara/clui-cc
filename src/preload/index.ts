@@ -29,6 +29,7 @@ export interface CluiAPI {
   ensureProject(projectPath: string): Promise<boolean>
   setProjectLabel(projectPath: string, label: string | null): Promise<boolean>
   deleteSession(sessionId: string, projectPath: string): Promise<boolean>
+  deleteProject(projectPath: string): Promise<boolean>
   loadSession(sessionId: string, projectPath?: string): Promise<SessionLoadMessage[]>
   getSessionModel(sessionId: string, projectPath?: string): Promise<string | null>
   setSessionModel(sessionId: string, projectPath: string | undefined, modelId: string | null): Promise<boolean>
@@ -91,6 +92,7 @@ const api: CluiAPI = {
   setProjectLabel: (projectPath, label) =>
     ipcRenderer.invoke(IPC.SET_PROJECT_LABEL, { projectPath, label }),
   deleteSession: (sessionId, projectPath) => ipcRenderer.invoke(IPC.DELETE_SESSION, { sessionId, projectPath }),
+  deleteProject: (projectPath) => ipcRenderer.invoke(IPC.DELETE_PROJECT, projectPath),
   loadSession: (sessionId: string, projectPath?: string) => ipcRenderer.invoke(IPC.LOAD_SESSION, { sessionId, projectPath }),
   getSessionModel: (sessionId, projectPath) => ipcRenderer.invoke(IPC.GET_SESSION_MODEL, { sessionId, projectPath }),
   setSessionModel: (sessionId, projectPath, modelId) =>

@@ -1,9 +1,10 @@
 import React, { useEffect, useState, useRef } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Folder, CaretLeft, CaretRight, CaretDown, CaretUp, Plus, PencilSimple } from '@phosphor-icons/react'
+import { Folder, CaretLeft, CaretRight, CaretDown, CaretUp, Plus, PencilSimple, Trash } from '@phosphor-icons/react'
 import { useSessionStore } from '../stores/sessionStore'
 import { useColors } from '../theme'
 import { slideTransition, slideTransitionFast } from '../motion'
+import { ConfirmDialog } from './ConfirmDialog'
 import type { ClaudeProject } from '../../shared/types'
 
 const SIDEBAR_WIDTH = 176
@@ -130,11 +131,13 @@ function ProjectSidebarItem({
   isSelected,
   onOpen,
   onRename,
+  onDeleteRequest,
 }: {
   project: ClaudeProject
   isSelected: boolean
   onOpen: () => void
   onRename: (label: string | null) => void
+  onDeleteRequest: () => void
 }) {
   const colors = useColors()
   const [editing, setEditing] = useState(false)
@@ -168,6 +171,11 @@ function ProjectSidebarItem({
   const startEditing = (e: React.MouseEvent) => {
     e.stopPropagation()
     setEditing(true)
+  }
+
+  const handleDelete = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    onDeleteRequest()
   }
 
   const handleOpenKeyDown = (e: React.KeyboardEvent) => {
@@ -241,20 +249,41 @@ function ProjectSidebarItem({
         </div>
       </div>
       {!editing && (
-        <button
-          type="button"
-          data-clui-ui
-          onClick={startEditing}
-          className="clui-pointer flex-shrink-0 p-0.5 rounded mt-0.5 opacity-60 hover:opacity-100 transition-opacity"
-          style={{ color: colors.textTertiary }}
-          title="Rename project"
-          aria-label="Rename project"
-        >
-          <PencilSimple size={11} />
-        </button>
+        <div className="flex flex-col flex-shrink-0 gap-0.5 mt-0.5">
+          <button
+            type="button"
+            data-clui-ui
+            onClick={startEditing}
+            className="clui-pointer p-0.5 rounded opacity-60 hover:opacity-100 transition-opacity"
+            style={{ color: colors.textTertiary }}
+            title="Rename project"
+            aria-label="Rename project"
+          >
+            <PencilSimple size={11} />
+          </button>
+          <button
+            type="button"
+            data-clui-ui
+            onClick={handleDelete}
+            className="clui-pointer p-0.5 rounded opacity-60 hover:opacity-100 transition-opacity"
+            style={{ color: colors.statusError }}
+            title="Remove project from Clui"
+            aria-label="Remove project from Clui"
+          >
+            <Trash size={11} />
+          </button>
+        </div>
       )}
     </div>
   )
+}
+
+function deleteProjectConfirmMessage(project: ClaudeProject): string {
+  const sessionNote =
+    project.sessionCount === 0
+      ? ''
+      : ` This removes ${project.sessionCount} Claude session${project.sessionCount === 1 ? '' : 's'}.`
+  return `${sessionNote} Your project folder on disk is not deleted.`.trim()
 }
 
 export function ProjectSidebarPanel() {
@@ -264,15 +293,30 @@ export function ProjectSidebarPanel() {
   const selectedProjectPath = useSessionStore((s) => s.selectedProjectPath)
   const openProject = useSessionStore((s) => s.openProject)
   const renameProject = useSessionStore((s) => s.renameProject)
+  const deleteProject = useSessionStore((s) => s.deleteProject)
   const createProject = useSessionStore((s) => s.createProject)
   const loadProjects = useSessionStore((s) => s.loadProjects)
   const colors = useColors()
+  const [pendingDelete, setPendingDelete] = useState<ClaudeProject | null>(null)
 
   useEffect(() => {
     if (sidebarOpen) void loadProjects()
   }, [sidebarOpen, loadProjects])
 
   return (
+    <>
+    <ConfirmDialog
+      open={pendingDelete !== null}
+      title={pendingDelete ? `Remove "${projectDisplayName(pendingDelete)}" project?` : ''}
+      message={pendingDelete ? deleteProjectConfirmMessage(pendingDelete) : ''}
+      confirmLabel="Remove"
+      destructive
+      onConfirm={() => {
+        if (pendingDelete) void deleteProject(pendingDelete.path)
+        setPendingDelete(null)
+      }}
+      onCancel={() => setPendingDelete(null)}
+    />
     <AnimatePresence initial={false}>
       {sidebarOpen && (
     <motion.div
@@ -324,6 +368,7 @@ export function ProjectSidebarPanel() {
             isSelected={selectedProjectPath === project.path}
             onOpen={() => void openProject(project.path)}
             onRename={(label) => void renameProject(project.path, label)}
+            onDeleteRequest={() => setPendingDelete(project)}
           />
         ))}
       </div>
@@ -349,6 +394,7 @@ export function ProjectSidebarPanel() {
     </motion.div>
       )}
     </AnimatePresence>
+    </>
   )
 }
 

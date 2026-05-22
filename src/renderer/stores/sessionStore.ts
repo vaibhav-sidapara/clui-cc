@@ -75,6 +75,7 @@ interface State {
   toggleSidebar: () => void
   loadProjects: () => Promise<void>
   renameProject: (projectPath: string, displayName: string | null) => Promise<void>
+  deleteProject: (projectPath: string) => Promise<void>
   createProject: () => Promise<void>
   openProject: (projectPath: string) => Promise<void>
   closeAllTabs: () => Promise<void>
@@ -265,6 +266,27 @@ export const useSessionStore = create<State>((set, get) => ({
   renameProject: async (projectPath, displayName) => {
     const ok = await window.clui.setProjectLabel(projectPath, displayName)
     if (!ok) return
+    await get().loadProjects()
+  },
+
+  deleteProject: async (projectPath) => {
+    const ok = await window.clui.deleteProject(projectPath).catch(() => false)
+    if (!ok) return
+
+    if (get().selectedProjectPath === projectPath) {
+      tabPersistenceEnabled = false
+      await get().closeAllTabs()
+      clearPersistedTabs()
+      set({
+        selectedProjectPath: null,
+        tabs: [],
+        activeTabId: '',
+        marketplaceOpen: false,
+      })
+      saveSidebarState({ open: get().sidebarOpen, selectedProjectPath: null })
+      tabPersistenceEnabled = true
+    }
+
     await get().loadProjects()
   },
 

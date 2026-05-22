@@ -1,11 +1,11 @@
-import { existsSync, mkdirSync, readdirSync, statSync, unlinkSync } from 'fs'
+import { existsSync, mkdirSync, readdirSync, rmSync, statSync, unlinkSync } from 'fs'
 import { homedir } from 'os'
 import { join } from 'path'
 import { createInterface } from 'readline'
 import { createReadStream } from 'fs'
 import { encodeProjectPath } from './session-models'
 import { setSessionModel } from './session-models'
-import { getAllProjectLabels } from './project-labels'
+import { getAllProjectLabels, setProjectLabel } from './project-labels'
 
 export { encodeProjectPath }
 
@@ -198,6 +198,22 @@ export function deleteSession(projectPath: string, sessionId: string): boolean {
   try {
     if (existsSync(filePath)) unlinkSync(filePath)
     setSessionModel(projectPath, sessionId, null)
+    return true
+  } catch {
+    return false
+  }
+}
+
+/** Remove Claude session history for a project (~/.claude/projects/<encoded>). Does not delete source files on disk. */
+export function deleteProject(projectPath: string): boolean {
+  if (/[\0\r\n]/.test(projectPath) || !projectPath.startsWith('/')) return false
+
+  const projectDir = join(projectsRoot(), encodeProjectPath(projectPath))
+  try {
+    if (existsSync(projectDir)) {
+      rmSync(projectDir, { recursive: true, force: true })
+    }
+    setProjectLabel(projectPath, null)
     return true
   } catch {
     return false

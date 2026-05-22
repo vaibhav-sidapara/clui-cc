@@ -344,6 +344,7 @@ export const IPC = {
   ENSURE_PROJECT: 'clui:ensure-project',
   SET_PROJECT_LABEL: 'clui:set-project-label',
   DELETE_SESSION: 'clui:delete-session',
+  DELETE_PROJECT: 'clui:delete-project',
 
   // One-way events (main → renderer)
   TEXT_CHUNK: 'clui:text-chunk',
