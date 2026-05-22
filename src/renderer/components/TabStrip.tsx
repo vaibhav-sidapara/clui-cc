@@ -4,6 +4,7 @@ import { Plus, X } from '@phosphor-icons/react'
 import { useSessionStore } from '../stores/sessionStore'
 import { HistoryPicker } from './HistoryPicker'
 import { SettingsPopover } from './SettingsPopover'
+import { ChatCollapseButton } from './ProjectSidebar'
 import { useColors } from '../theme'
 import type { TabStatus } from '../../shared/types'
 
@@ -42,13 +43,22 @@ export function TabStrip() {
   const selectTab = useSessionStore((s) => s.selectTab)
   const createTab = useSessionStore((s) => s.createTab)
   const closeTab = useSessionStore((s) => s.closeTab)
+  const selectedProjectPath = useSessionStore((s) => s.selectedProjectPath)
   const colors = useColors()
 
   return (
+    <div data-clui-ui className="relative flex-shrink-0">
+      <div
+        className="absolute left-0 right-0 top-1 flex justify-center z-20 pointer-events-none"
+        style={{ height: 18 }}
+      >
+        <div className="pointer-events-auto">
+          <ChatCollapseButton />
+        </div>
+      </div>
     <div
-      data-clui-ui
       className="flex items-center"
-      style={{ padding: '8px 0' }}
+      style={{ padding: '10px 0 8px' }}
     >
       {/* Scrollable tabs area — clipped by master card edge */}
       <div className="relative min-w-0 flex-1">
@@ -115,9 +125,10 @@ export function TabStrip() {
       <div className="flex items-center gap-0.5 flex-shrink-0 ml-1 pr-2">
         <button
           onClick={() => createTab()}
-          className="clui-pointer flex-shrink-0 w-6 h-6 flex items-center justify-center rounded-full transition-colors"
+          disabled={!selectedProjectPath}
+          className="clui-pointer flex-shrink-0 w-6 h-6 flex items-center justify-center rounded-full transition-colors disabled:opacity-30"
           style={{ color: colors.textTertiary }}
-          title="New tab"
+          title={selectedProjectPath ? 'New tab' : 'Select a project first'}
         >
           <Plus size={14} />
         </button>
@@ -126,6 +137,7 @@ export function TabStrip() {
 
         <SettingsPopover />
       </div>
+    </div>
     </div>
   )
 }

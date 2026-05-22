@@ -11,6 +11,7 @@ import { useSessionStore } from '../stores/sessionStore'
 import { PermissionCard } from './PermissionCard'
 import { PermissionDeniedCard } from './PermissionDeniedCard'
 import { useColors, useThemeStore } from '../theme'
+import { chatLayoutMetrics } from '../chat-layout'
 import type { Message } from '../../shared/types'
 
 // ─── Constants ───
@@ -69,6 +70,7 @@ export function ConversationView() {
   const prevTabIdRef = useRef(activeTabId)
   const colors = useColors()
   const expandedUI = useThemeStore((s) => s.expandedUI)
+  const { conversationHeight } = chatLayoutMetrics(expandedUI)
 
   const tab = tabs.find((t) => t.id === activeTabId)
 
@@ -119,7 +121,22 @@ export function ConversationView() {
     setRenderOffset((o) => o + 1)
   }, [])
 
-  if (!tab) return null
+  if (!tab) {
+    return (
+      <div
+        data-clui-ui
+        className="flex flex-col items-center justify-center px-6 text-center flex-shrink-0"
+        style={{ height: conversationHeight, minHeight: conversationHeight }}
+      >
+        <p className="text-[13px] font-medium" style={{ color: colors.textSecondary }}>
+          Select a project
+        </p>
+        <p className="text-[11px] mt-1.5 max-w-[280px]" style={{ color: colors.textTertiary }}>
+          Use the arrow on the left edge of the window to open projects. Each session opens as a tab.
+        </p>
+      </div>
+    )
+  }
 
   const isRunning = tab.status === 'running' || tab.status === 'connecting'
   const isDead = tab.status === 'dead'
@@ -127,7 +144,10 @@ export function ConversationView() {
   const showInterrupt = isRunning && tab.messages.some((m) => m.role === 'user')
 
   if (tab.messages.length === 0) {
-    return <EmptyState />
+    if (tab.hasChosenDirectory && tab.workingDirectory && tab.workingDirectory !== '~') {
+      return <ProjectReadyEmptyState height={conversationHeight} projectPath={tab.workingDirectory} />
+    }
+    return <EmptyState height={conversationHeight} />
   }
 
   // Messages from before initial render cap are "historical" — no motion
@@ -143,14 +163,16 @@ export function ConversationView() {
   return (
     <div
       data-clui-ui
+      className="relative flex-shrink-0"
+      style={{ height: conversationHeight, minHeight: conversationHeight }}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
     >
       {/* Scrollable messages area */}
       <div
         ref={scrollRef}
-        className="overflow-y-auto overflow-x-hidden px-4 pt-2 conversation-selectable"
-        style={{ maxHeight: expandedUI ? 460 : 336, paddingBottom: 28 }}
+        className="h-full overflow-y-auto overflow-x-hidden px-4 pt-2 conversation-selectable"
+        style={{ paddingBottom: 28 }}
         onScroll={handleScroll}
       >
         {/* Load older button */}
@@ -227,17 +249,15 @@ export function ConversationView() {
 
       {/* Activity row — overlaps bottom of scroll area as a fade strip */}
       <div
-        className="flex items-center justify-between px-4 relative"
+        className="flex items-center justify-between px-4 absolute left-0 right-0 bottom-0 pointer-events-none"
         style={{
           height: 28,
-          minHeight: 28,
-          marginTop: -28,
           background: `linear-gradient(to bottom, transparent, ${colors.containerBg} 70%)`,
           zIndex: 2,
         }}
       >
         {/* Left: status indicator */}
-        <div className="flex items-center gap-1.5 text-[11px] min-w-0">
+        <div className="flex items-center gap-1.5 text-[11px] min-w-0 pointer-events-auto">
           {isRunning && (
             <span className="flex items-center gap-1.5">
               <span className="flex gap-[3px]">
@@ -269,7 +289,7 @@ export function ConversationView() {
         </div>
 
         {/* Right: interrupt button when running */}
-        <div className="flex items-center flex-shrink-0">
+        <div className="flex items-center flex-shrink-0 pointer-events-auto">
           <AnimatePresence>
             {showInterrupt && (
               <InterruptButton tabId={tab.id} />
@@ -281,9 +301,40 @@ export function ConversationView() {
   )
 }
 
+function projectFolderLabel(path: string): string {
+  const parts = path.replace(/\/$/, '').split('/')
+  return parts[parts.length - 1] || path
+}
+
+// ─── Empty state when project directory is already set ───
+
+function ProjectReadyEmptyState({ height, projectPath }: { height: number; projectPath: string }) {
+  const colors = useColors()
+  const label = projectFolderLabel(projectPath)
+
+  return (
+    <div
+      data-clui-ui
+      className="flex flex-col items-center justify-center px-6 text-center flex-shrink-0"
+      style={{ height, minHeight: height }}
+    >
+      <FolderOpen size={20} style={{ color: colors.textTertiary, marginBottom: 8 }} />
+      <p className="text-[13px] font-medium" style={{ color: colors.textSecondary }}>
+        {label}
+      </p>
+      <p className="text-[11px] mt-1.5 max-w-[280px]" style={{ color: colors.textTertiary }}>
+        New session in this project — ask something below
+      </p>
+      <span className="text-[10px] mt-2" style={{ color: colors.textMuted }} title={projectPath}>
+        {projectPath}
+      </span>
+    </div>
+  )
+}
+
 // ─── Empty State (directory picker before first message) ───
 
-function EmptyState() {
+function EmptyState({ height }: { height: number }) {
   const setBaseDirectory = useSessionStore((s) => s.setBaseDirectory)
   const colors = useColors()
 
@@ -296,8 +347,9 @@ function EmptyState() {
 
   return (
     <div
-      className="flex flex-col items-center justify-center px-4 py-3 gap-1.5"
-      style={{ minHeight: 80 }}
+      data-clui-ui
+      className="flex flex-col items-center justify-center px-4 gap-1.5 flex-shrink-0"
+      style={{ height, minHeight: height }}
     >
       <button
         onClick={handleChooseFolder}

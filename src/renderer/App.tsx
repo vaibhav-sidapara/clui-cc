@@ -2,6 +2,8 @@ import React, { useEffect, useCallback, useRef } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Paperclip, Camera, HeadCircuit } from '@phosphor-icons/react'
 import { TabStrip } from './components/TabStrip'
+import { ProjectSidebarPanel, ProjectSidebarToggle } from './components/ProjectSidebar'
+import { chatLayoutMetrics } from './chat-layout'
 import { ConversationView } from './components/ConversationView'
 import { InputBar } from './components/InputBar'
 import { StatusBar } from './components/StatusBar'
@@ -11,8 +13,9 @@ import { useClaudeEvents } from './hooks/useClaudeEvents'
 import { useHealthReconciliation } from './hooks/useHealthReconciliation'
 import { useSessionStore } from './stores/sessionStore'
 import { useColors, useThemeStore, spacing } from './theme'
+import { chatBodyTransition, slideTransition } from './motion'
 
-const TRANSITION = { duration: 0.26, ease: [0.4, 0, 0.1, 1] as const }
+const TRANSITION = slideTransition
 
 export default function App() {
   useClaudeEvents()
@@ -174,6 +177,7 @@ export default function App() {
   }, [])
 
   const isExpanded = useSessionStore((s) => s.isExpanded)
+  const sidebarOpen = useSessionStore((s) => s.sidebarOpen)
   const marketplaceOpen = useSessionStore((s) => s.marketplaceOpen)
   const isRunning = activeTabStatus === 'running' || activeTabStatus === 'connecting'
 
@@ -182,7 +186,7 @@ export default function App() {
   const cardExpandedWidth = expandedUI ? 700 : 460
   const cardCollapsedWidth = expandedUI ? 670 : 430
   const cardCollapsedMargin = expandedUI ? 15 : 15
-  const bodyMaxHeight = expandedUI ? 520 : 400
+  const { bodyHeight: chatBodyHeight } = chatLayoutMetrics(expandedUI)
 
   const handleScreenshot = useCallback(async () => {
     const result = await window.clui.takeScreenshot()
@@ -218,10 +222,10 @@ export default function App() {
                 }}
               >
                 <motion.div
-                  initial={{ opacity: 0, y: 14, scale: 0.98 }}
-                  animate={{ opacity: 1, y: 0, scale: 1 }}
-                  exit={{ opacity: 0, y: 10, scale: 0.985 }}
-                  transition={TRANSITION}
+                  initial={{ opacity: 0, y: 16 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: 12 }}
+                  transition={slideTransition}
                 >
                   <div
                     data-clui-ui
@@ -245,7 +249,7 @@ export default function App() {
           */}
           <motion.div
             data-clui-ui
-            className="overflow-hidden flex flex-col drag-region"
+            className="overflow-hidden flex flex-row drag-region"
             animate={{
               width: isExpanded ? cardExpandedWidth : cardCollapsedWidth,
               marginBottom: isExpanded ? 10 : -14,
@@ -264,26 +268,34 @@ export default function App() {
               zIndex: isExpanded ? 20 : 10,
             }}
           >
-            {/* Tab strip — drag handle for the frameless window */}
-            <div>
-              <TabStrip />
-            </div>
+            {isExpanded && <ProjectSidebarPanel />}
 
-            {/* Body — chat history only; the marketplace is a separate overlay above */}
-            <motion.div
-              initial={false}
-              animate={{
-                height: isExpanded ? 'auto' : 0,
-                opacity: isExpanded ? 1 : 0,
-              }}
-              transition={TRANSITION}
-              className="overflow-hidden no-drag"
-            >
-              <div style={{ maxHeight: bodyMaxHeight }}>
-                <ConversationView />
-                <StatusBar />
-              </div>
-            </motion.div>
+            <div className="flex flex-col flex-1 min-w-0 relative min-h-0">
+              {isExpanded && <ProjectSidebarToggle />}
+
+              <TabStrip />
+
+              <motion.div
+                initial={false}
+                animate={{
+                  height: isExpanded ? chatBodyHeight : 0,
+                  opacity: isExpanded ? 1 : 0,
+                }}
+                transition={chatBodyTransition}
+                className="overflow-hidden no-drag flex-shrink-0"
+              >
+                <motion.div
+                  initial={false}
+                  animate={{ y: isExpanded ? 0 : -20 }}
+                  transition={slideTransition}
+                  className="flex flex-col"
+                  style={{ height: chatBodyHeight, minHeight: chatBodyHeight }}
+                >
+                  <ConversationView />
+                  <StatusBar />
+                </motion.div>
+              </motion.div>
+            </div>
           </motion.div>
 
           {/* ─── Input row — circles float outside left ─── */}

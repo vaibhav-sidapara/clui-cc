@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Terminal, CaretDown, Check, FolderOpen, Plus, X, ShieldCheck } from '@phosphor-icons/react'
+import { Terminal, CaretDown, Check, FolderOpen, Plus, X, ShieldCheck, Trash } from '@phosphor-icons/react'
 import { useSessionStore, AVAILABLE_MODELS, getModelDisplayLabel, getEffectiveModel } from '../stores/sessionStore'
 import { usePopoverLayer } from './PopoverLayer'
 import { useColors, useThemeStore } from '../theme'
@@ -264,6 +264,8 @@ export function StatusBar() {
   )
   const addDirectory = useSessionStore((s) => s.addDirectory)
   const removeDirectory = useSessionStore((s) => s.removeDirectory)
+  const deleteActiveSession = useSessionStore((s) => s.deleteActiveSession)
+  const cliTerminal = useThemeStore((s) => s.cliTerminal)
   const popoverLayer = usePopoverLayer()
   const colors = useColors()
 
@@ -285,17 +287,28 @@ export function StatusBar() {
     return () => document.removeEventListener('mousedown', handler)
   }, [dirOpen])
 
-  if (!tab) return null
+  if (!tab) {
+    return (
+      <div
+        className="flex items-center px-4 py-2 flex-shrink-0"
+        style={{ height: 36, minHeight: 36, color: colors.textTertiary, fontSize: 11 }}
+      >
+        Select a project to begin
+      </div>
+    )
+  }
 
   const isRunning = tab.status === 'running' || tab.status === 'connecting'
-  const isEmpty = tab.messages.length === 0
   const hasExtraDirs = tab.additionalDirs.length > 0
-
-  const cliTerminal = useThemeStore((s) => s.cliTerminal)
   const cliLabel = cliTerminal === 'iterm' ? 'iTerm' : 'Terminal'
 
   const handleOpenInTerminal = () => {
     window.clui.openInTerminal(tab.claudeSessionId, tab.workingDirectory, cliTerminal)
+  }
+
+  const handleDeleteSession = () => {
+    if (isRunning) return
+    void deleteActiveSession()
   }
 
   const handleDirClick = () => {
@@ -323,8 +336,8 @@ export function StatusBar() {
 
   return (
     <div
-      className="flex items-center justify-between px-4 py-1.5"
-      style={{ minHeight: 28 }}
+      className="flex items-center justify-between px-4 py-1.5 flex-shrink-0"
+      style={{ height: 36, minHeight: 36 }}
     >
       {/* Left — directory + model picker */}
       <div className="flex items-center gap-2 text-[11px] min-w-0" style={{ color: colors.textTertiary }}>
@@ -433,8 +446,21 @@ export function StatusBar() {
         <PermissionModePicker />
       </div>
 
-      {/* Right — Open in CLI */}
+      {/* Right — delete session + Open in CLI */}
       <div className="flex items-center gap-1.5 flex-shrink-0">
+        <button
+          onClick={handleDeleteSession}
+          disabled={isRunning}
+          className="clui-pointer flex items-center gap-1 text-[11px] rounded-full px-2 py-0.5 transition-colors disabled:opacity-40"
+          style={{
+            color: colors.statusError,
+            cursor: isRunning ? 'not-allowed' : 'pointer',
+          }}
+          title={tab.claudeSessionId ? 'Delete session and close tab' : 'Close tab'}
+        >
+          Delete
+          <Trash size={11} />
+        </button>
         <button
           onClick={handleOpenInTerminal}
           className="clui-pointer flex items-center gap-1 text-[11px] rounded-full px-2 py-0.5 transition-colors"

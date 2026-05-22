@@ -34,6 +34,12 @@ export function tabToSnapshot(tab: TabState): PersistedTabSnapshot {
   }
 }
 
+export function clearPersistedTabs(): void {
+  try {
+    localStorage.removeItem(TABS_STORAGE_KEY)
+  } catch {}
+}
+
 export function saveOpenTabs(tabs: TabState[], activeTabId: string): void {
   if (tabs.length === 0) return
   const activeIndex = tabs.findIndex((t) => t.id === activeTabId)
@@ -76,12 +82,6 @@ export function loadOpenTabs(): PersistedTabsState | null {
   } catch {
     return null
   }
-}
-
-export function clearPersistedTabs(): void {
-  try {
-    localStorage.removeItem(TABS_STORAGE_KEY)
-  } catch {}
 }
 
 export async function loadTabHistory(

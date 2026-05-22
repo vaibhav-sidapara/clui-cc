@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { TabStatus, NormalizedEvent, EnrichedError, Message, TabState, Attachment, CatalogPlugin, PluginStatus } from '../../shared/types'
+import type { TabStatus, NormalizedEvent, EnrichedError, Message, TabState, Attachment, CatalogPlugin, PluginStatus, ClaudeProject, SessionMeta } from '../../shared/types'
 import { useThemeStore } from '../theme'
 import {
   AVAILABLE_MODELS,
@@ -8,7 +8,8 @@ import {
   isKnownModelId,
 } from '../models'
 import notificationSrc from '../../../resources/notification.mp3'
-import { loadOpenTabs, loadTabHistory, saveOpenTabs, type PersistedTabSnapshot } from '../tab-persistence'
+import { clearPersistedTabs, loadTabHistory, saveOpenTabs } from '../tab-persistence'
+import { loadSidebarState, saveSidebarState } from '../sidebar-persistence'
 
 export { AVAILABLE_MODELS, getModelDisplayLabel, getEffectiveModel }
 
@@ -51,6 +52,12 @@ interface State {
   /** Global permission mode: 'ask' shows cards, 'auto' auto-approves all tool calls */
   permissionMode: 'ask' | 'auto'
 
+  /** Projects sidebar */
+  sidebarOpen: boolean
+  selectedProjectPath: string | null
+  projects: ClaudeProject[]
+  projectsLoading: boolean
+
   // Marketplace state
   marketplaceOpen: boolean
   marketplaceCatalog: CatalogPlugin[]
@@ -63,8 +70,15 @@ interface State {
 
   // Actions
   initStaticInfo: () => Promise<void>
-  /** Load static info, restore open tabs from last session, or create one default tab */
+  /** Load static info; start with no tabs until a project is chosen */
   initAndRestoreTabs: () => Promise<void>
+  toggleSidebar: () => void
+  loadProjects: () => Promise<void>
+  renameProject: (projectPath: string, displayName: string | null) => Promise<void>
+  createProject: () => Promise<void>
+  openProject: (projectPath: string) => Promise<void>
+  closeAllTabs: () => Promise<void>
+  deleteActiveSession: () => Promise<void>
   setTabModel: (modelId: string) => void
   setPermissionMode: (mode: 'ask' | 'auto') => void
   createTab: () => Promise<string>
@@ -115,38 +129,6 @@ async function playNotificationIfHidden(): Promise<void> {
 
 let tabPersistenceEnabled = false
 
-async function buildTabFromSnapshot(
-  homeDir: string,
-  snapshot?: PersistedTabSnapshot,
-): Promise<TabState> {
-  const { tabId } = await window.clui.createTab()
-  const projectPath =
-    !snapshot?.workingDirectory || snapshot.workingDirectory === '~'
-      ? homeDir
-      : snapshot.workingDirectory
-
-  let messages: Message[] = []
-  let modelOverride = snapshot?.modelOverride ?? null
-  if (snapshot?.claudeSessionId) {
-    messages = await loadTabHistory(snapshot.claudeSessionId, projectPath)
-    if (!modelOverride) {
-      modelOverride = await loadSessionModelOverride(snapshot.claudeSessionId, projectPath)
-    }
-  }
-
-  return {
-    ...makeLocalTab(),
-    id: tabId,
-    title: snapshot?.title ?? 'New Tab',
-    claudeSessionId: snapshot?.claudeSessionId ?? null,
-    workingDirectory: snapshot?.workingDirectory ?? homeDir,
-    hasChosenDirectory: snapshot?.hasChosenDirectory ?? false,
-    additionalDirs: snapshot?.additionalDirs ?? [],
-    modelOverride,
-    messages,
-  }
-}
-
 function makeLocalTab(): TabState {
   return {
     id: crypto.randomUUID(),
@@ -174,14 +156,52 @@ function makeLocalTab(): TabState {
   }
 }
 
-const initialTab = makeLocalTab()
+function sessionTabTitle(session: SessionMeta): string {
+  if (session.slug) return session.slug
+  if (session.firstMessage) {
+    const t = session.firstMessage.trim()
+    return t.length > 28 ? `${t.substring(0, 25)}...` : t
+  }
+  return 'Session'
+}
+
+async function openSessionAsTab(session: SessionMeta, projectPath: string): Promise<TabState> {
+  const { tabId } = await window.clui.createTab()
+  const messages = await loadTabHistory(session.sessionId, projectPath)
+  const modelOverride = await loadSessionModelOverride(session.sessionId, projectPath)
+  return {
+    ...makeLocalTab(),
+    id: tabId,
+    claudeSessionId: session.sessionId,
+    title: sessionTabTitle(session),
+    workingDirectory: projectPath,
+    hasChosenDirectory: true,
+    modelOverride,
+    messages,
+  }
+}
+
+async function createEmptyProjectTab(projectPath: string): Promise<TabState> {
+  const { tabId } = await window.clui.createTab()
+  return {
+    ...makeLocalTab(),
+    id: tabId,
+    workingDirectory: projectPath,
+    hasChosenDirectory: true,
+    title: 'New Tab',
+  }
+}
 
 export const useSessionStore = create<State>((set, get) => ({
-  tabs: [initialTab],
-  activeTabId: initialTab.id,
+  tabs: [],
+  activeTabId: '',
   isExpanded: false,
   staticInfo: null,
   permissionMode: 'ask',
+  sidebarOpen: false,
+  selectedProjectPath: null,
+  projects: [],
+  projectsLoading: false,
 
   // Marketplace
   marketplaceOpen: false,
@@ -210,38 +230,107 @@ export const useSessionStore = create<State>((set, get) => ({
 
   initAndRestoreTabs: async () => {
     tabPersistenceEnabled = false
+    clearPersistedTabs()
     await get().initStaticInfo()
-    const homeDir = get().staticInfo?.homePath || '~'
-
-    try {
-      const saved = loadOpenTabs()
-      if (saved?.tabs.length) {
-        const restored: TabState[] = []
-        for (const snap of saved.tabs) {
-          restored.push(await buildTabFromSnapshot(homeDir, snap))
-        }
-        const active = restored[Math.min(saved.activeTabIndex, restored.length - 1)]
-        set({ tabs: restored, activeTabId: active.id })
-      } else {
-        const tab = await buildTabFromSnapshot(homeDir)
-        set({ tabs: [tab], activeTabId: tab.id })
-      }
-    } catch {
-      const fallback = makeLocalTab()
-      fallback.workingDirectory = homeDir
-      set({ tabs: [fallback], activeTabId: fallback.id })
-      try {
-        const { tabId } = await window.clui.createTab()
-        set((s) => ({
-          tabs: s.tabs.map((t) => (t.id === fallback.id ? { ...t, id: tabId } : t)),
-          activeTabId: tabId,
-        }))
-      } catch {}
-    }
-
+    const sidebar = loadSidebarState()
+    set({
+      tabs: [],
+      activeTabId: '',
+      sidebarOpen: sidebar.open,
+      selectedProjectPath: sidebar.selectedProjectPath,
+    })
+    await get().loadProjects()
     tabPersistenceEnabled = true
-    const { tabs, activeTabId } = get()
-    if (tabs.length > 0) saveOpenTabs(tabs, activeTabId)
+  },
+
+  toggleSidebar: () => {
+    const open = !get().sidebarOpen
+    set({ sidebarOpen: open })
+    saveSidebarState({ open, selectedProjectPath: get().selectedProjectPath })
+    if (open) void get().loadProjects()
+  },
+
+  loadProjects: async () => {
+    set({ projectsLoading: true })
+    try {
+      const projects = await window.clui.listProjects()
+      set({ projects, projectsLoading: false })
+    } catch {
+      set({ projectsLoading: false })
+    }
+  },
+
+  renameProject: async (projectPath, displayName) => {
+    const ok = await window.clui.setProjectLabel(projectPath, displayName)
+    if (!ok) return
+    await get().loadProjects()
+  },
+
+  createProject: async () => {
+    const dir = await window.clui.selectDirectory()
+    if (!dir) return
+    const ok = await window.clui.ensureProject(dir)
+    if (!ok) return
+    tabPersistenceEnabled = false
+    await get().closeAllTabs()
+    const tab = await createEmptyProjectTab(dir)
+    set({
+      selectedProjectPath: dir,
+      tabs: [tab],
+      activeTabId: tab.id,
+      isExpanded: true,
+      marketplaceOpen: false,
+      sidebarOpen: true,
+    })
+    saveSidebarState({ open: true, selectedProjectPath: dir })
+    await get().loadProjects()
+    tabPersistenceEnabled = true
+    saveOpenTabs([tab], tab.id)
+  },
+
+  closeAllTabs: async () => {
+    const ids = get().tabs.map((t) => t.id)
+    await Promise.all(ids.map((id) => window.clui.closeTab(id).catch(() => {})))
+    set({ tabs: [], activeTabId: '' })
+  },
+
+  openProject: async (projectPath) => {
+    tabPersistenceEnabled = false
+    await get().closeAllTabs()
+    const sessions = await window.clui.listSessions(projectPath)
+    const tabs: TabState[] = []
+    if (sessions.length === 0) {
+      tabs.push(await createEmptyProjectTab(projectPath))
+    } else {
+      for (const session of sessions) {
+        tabs.push(await openSessionAsTab(session, projectPath))
+      }
+    }
+    set({
+      selectedProjectPath: projectPath,
+      tabs,
+      activeTabId: tabs[0]?.id ?? '',
+      isExpanded: true,
+      marketplaceOpen: false,
+    })
+    saveSidebarState({ open: get().sidebarOpen, selectedProjectPath: projectPath })
+    tabPersistenceEnabled = true
+    if (tabs.length > 0) saveOpenTabs(tabs, tabs[0].id)
+  },
+
+  deleteActiveSession: async () => {
+    const { activeTabId, tabs, selectedProjectPath } = get()
+    const tab = tabs.find((t) => t.id === activeTabId)
+    if (!tab) return
+    const projectPath =
+      tab.workingDirectory && tab.workingDirectory !== '~'
+        ? tab.workingDirectory
+        : selectedProjectPath
+    if (tab.claudeSessionId && projectPath?.startsWith('/')) {
+      await window.clui.deleteSession(tab.claudeSessionId, projectPath).catch(() => {})
+    }
+    get().closeTab(activeTabId)
+    void get().loadProjects()
   },
 
   setTabModel: (modelId) => {
@@ -264,27 +353,19 @@ export const useSessionStore = create<State>((set, get) => ({
   },
 
   createTab: async () => {
-    const homeDir = get().staticInfo?.homePath || '~'
+    const projectPath = get().selectedProjectPath
+    if (!projectPath) return ''
     try {
-      const { tabId } = await window.clui.createTab()
-      const tab: TabState = {
-        ...makeLocalTab(),
-        id: tabId,
-        workingDirectory: homeDir,
-      }
+      const tab = await createEmptyProjectTab(projectPath)
       set((s) => ({
         tabs: [...s.tabs, tab],
         activeTabId: tab.id,
+        isExpanded: true,
       }))
-      return tabId
-    } catch {
-      const tab = makeLocalTab()
-      tab.workingDirectory = homeDir
-      set((s) => ({
-        tabs: [...s.tabs, tab],
-        activeTabId: tab.id,
-      }))
+      if (tabPersistenceEnabled) saveOpenTabs(get().tabs, tab.id)
       return tab.id
+    } catch {
+      return ''
     }
   },
 
@@ -427,7 +508,8 @@ export const useSessionStore = create<State>((set, get) => ({
 
     if (s.activeTabId === tabId) {
       if (remaining.length === 0) {
-        void get().createTab()
+        set({ tabs: [], activeTabId: '' })
+        clearPersistedTabs()
         return
       }
       const closedIndex = s.tabs.findIndex((t) => t.id === tabId)
@@ -1028,6 +1110,9 @@ export const useSessionStore = create<State>((set, get) => ({
 // Persist open tabs on every change; closed tabs are omitted automatically.
 useSessionStore.subscribe((state) => {
   if (!tabPersistenceEnabled) return
-  if (state.tabs.length === 0) return
+  if (state.tabs.length === 0) {
+    clearPersistedTabs()
+    return
+  }
   saveOpenTabs(state.tabs, state.activeTabId)
 })

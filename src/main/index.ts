@@ -10,6 +10,8 @@ import { log as _log, LOG_FILE, flushLogs } from './logger'
 import { getCliEnv } from './cli-env'
 import { IPC } from '../shared/types'
 import { getSessionModel, setSessionModel } from './session-models'
+import { listProjects, listSessionsForProject, deleteSession, ensureProjectDirectory } from './claude-projects'
+import { setProjectLabel } from './project-labels'
 import { buildCliCommand, buildOpenTerminalAppleScript } from './open-terminal'
 import type { CliTerminalApp } from '../shared/types'
 import type { RunOptions, NormalizedEvent, EnrichedError } from '../shared/types'
@@ -54,6 +56,41 @@ function installContentSecurityPolicy(): void {
 
 function log(msg: string): void {
   _log('main', msg)
+}
+
+/**
+ * Show a native open dialog above the transparent overlay.
+ * On macOS: unparented dialog + temporarily drop always-on-top — parenting dims the
+ * transparent window black; unparented alone sits behind the screen-saver panel.
+ */
+async function showModalOpenDialog(
+  options: Electron.OpenDialogOptions,
+): Promise<Electron.OpenDialogReturnValue> {
+  const win = mainWindow
+  if (!win || win.isDestroyed()) {
+    return { canceled: true, filePaths: [] }
+  }
+
+  const wasAlwaysOnTop = win.isAlwaysOnTop()
+
+  try {
+    app.focus({ steal: true })
+    if (!win.isVisible()) win.show()
+
+    if (process.platform === 'darwin') {
+      win.setAlwaysOnTop(false)
+      return await dialog.showOpenDialog(options)
+    }
+
+    win.focus()
+    win.moveTop()
+    return await dialog.showOpenDialog(win, options)
+  } finally {
+    if (!win.isDestroyed() && wasAlwaysOnTop) {
+      win.setAlwaysOnTop(true, 'screen-saver')
+      win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
+    }
+  }
 }
 
 let mainWindow: BrowserWindow | null = null
@@ -499,88 +536,56 @@ ipcMain.handle(IPC.RESPOND_PERMISSION, (_event, { tabId, questionId, optionId }:
   return controlPlane.respondToPermission(tabId, questionId, optionId)
 })
 
+ipcMain.handle(IPC.LIST_PROJECTS, () => {
+  log('IPC LIST_PROJECTS')
+  try {
+    return listProjects()
+  } catch (err) {
+    log(`LIST_PROJECTS error: ${err}`)
+    return []
+  }
+})
+
+ipcMain.handle(IPC.ENSURE_PROJECT, (_e, projectPath: string) => {
+  log(`IPC ENSURE_PROJECT ${projectPath}`)
+  try {
+    return ensureProjectDirectory(projectPath)
+  } catch (err) {
+    log(`ENSURE_PROJECT error: ${err}`)
+    return false
+  }
+})
+
+ipcMain.handle(IPC.SET_PROJECT_LABEL, (_e, arg: { projectPath: string; label: string | null }) => {
+  const { projectPath, label } = arg
+  log(`IPC SET_PROJECT_LABEL ${projectPath} -> ${label ?? '(default)'}`)
+  try {
+    return setProjectLabel(projectPath, label)
+  } catch (err) {
+    log(`SET_PROJECT_LABEL error: ${err}`)
+    return false
+  }
+})
+
 ipcMain.handle(IPC.LIST_SESSIONS, async (_e, projectPath?: string) => {
   log(`IPC LIST_SESSIONS ${projectPath ? `(path=${projectPath})` : ''}`)
   try {
     const cwd = projectPath || process.cwd()
-    // Validate projectPath — reject null bytes, newlines, non-absolute paths
     if (/[\0\r\n]/.test(cwd) || !cwd.startsWith('/')) {
       log(`LIST_SESSIONS: rejected invalid projectPath: ${cwd}`)
       return []
     }
-    // Claude stores project sessions at ~/.claude/projects/<encoded-path>/
-    // Path encoding: replace all '/' with '-' (leading '/' becomes leading '-')
-    const encodedPath = cwd.replace(/\//g, '-')
-    const sessionsDir = join(homedir(), '.claude', 'projects', encodedPath)
-    if (!existsSync(sessionsDir)) {
-      log(`LIST_SESSIONS: directory not found: ${sessionsDir}`)
-      return []
-    }
-    const files = readdirSync(sessionsDir).filter((f: string) => f.endsWith('.jsonl'))
-
-    const sessions: Array<{ sessionId: string; slug: string | null; firstMessage: string | null; lastTimestamp: string; size: number }> = []
-
-    // UUID v4 regex — only consider files named as valid UUIDs
-    const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-
-    for (const file of files) {
-      // The filename (without .jsonl) IS the canonical resume ID for `claude --resume`
-      const fileSessionId = file.replace(/\.jsonl$/, '')
-      if (!UUID_RE.test(fileSessionId)) continue // skip non-UUID files
-
-      const filePath = join(sessionsDir, file)
-      const stat = statSync(filePath)
-      if (stat.size < 100) continue // skip trivially small files
-
-      // Read lines to extract metadata and validate transcript schema
-      const meta: { validated: boolean; slug: string | null; firstMessage: string | null; lastTimestamp: string | null } = {
-        validated: false, slug: null, firstMessage: null, lastTimestamp: null,
-      }
-
-      await new Promise<void>((resolve) => {
-        const rl = createInterface({ input: createReadStream(filePath) })
-        rl.on('line', (line: string) => {
-          try {
-            const obj = JSON.parse(line)
-            // Validate: must have expected Claude transcript fields
-            if (!meta.validated && obj.type && obj.uuid && obj.timestamp) {
-              meta.validated = true
-            }
-            if (obj.slug && !meta.slug) meta.slug = obj.slug
-            if (obj.timestamp) meta.lastTimestamp = obj.timestamp
-            if (obj.type === 'user' && !meta.firstMessage) {
-              const content = obj.message?.content
-              if (typeof content === 'string') {
-                meta.firstMessage = content.substring(0, 100)
-              } else if (Array.isArray(content)) {
-                const textPart = content.find((p: any) => p.type === 'text')
-                meta.firstMessage = textPart?.text?.substring(0, 100) || null
-              }
-            }
-          } catch {}
-          // Read all lines to get the last timestamp
-        })
-        rl.on('close', () => resolve())
-      })
-
-      if (meta.validated) {
-        sessions.push({
-          sessionId: fileSessionId,
-          slug: meta.slug,
-          firstMessage: meta.firstMessage,
-          lastTimestamp: meta.lastTimestamp || stat.mtime.toISOString(),
-          size: stat.size,
-        })
-      }
-    }
-
-    // Sort by last timestamp, most recent first
-    sessions.sort((a, b) => new Date(b.lastTimestamp).getTime() - new Date(a.lastTimestamp).getTime())
-    return sessions.slice(0, 20) // Return top 20
+    return await listSessionsForProject(cwd)
   } catch (err) {
     log(`LIST_SESSIONS error: ${err}`)
     return []
   }
+})
+
+ipcMain.handle(IPC.DELETE_SESSION, (_e, arg: { sessionId: string; projectPath: string }) => {
+  const { sessionId, projectPath } = arg
+  log(`IPC DELETE_SESSION ${sessionId} (${projectPath})`)
+  return deleteSession(projectPath, sessionId)
 })
 
 const SESSION_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
@@ -681,16 +686,8 @@ ipcMain.handle(IPC.LOAD_SESSION, async (_e, arg: { sessionId: string; projectPat
 })
 
 ipcMain.handle(IPC.SELECT_DIRECTORY, async () => {
-  if (!mainWindow) return null
-  // macOS: activate app so unparented dialog appears on top (not behind other apps).
-  // Unparented avoids modal dimming on the transparent overlay.
-  // Activation is fine here — user is actively interacting with CLUI.
-  if (process.platform === 'darwin') app.focus()
-  const options = { properties: ['openDirectory'] as const }
-  const result = process.platform === 'darwin'
-    ? await dialog.showOpenDialog(options)
-    : await dialog.showOpenDialog(mainWindow, options)
-  return result.canceled ? null : result.filePaths[0]
+  const result = await showModalOpenDialog({ properties: ['openDirectory'] })
+  return result.canceled || result.filePaths.length === 0 ? null : result.filePaths[0]
 })
 
 ipcMain.handle(IPC.OPEN_EXTERNAL, async (_event, url: string) => {
@@ -707,20 +704,14 @@ ipcMain.handle(IPC.OPEN_EXTERNAL, async (_event, url: string) => {
 })
 
 ipcMain.handle(IPC.ATTACH_FILES, async () => {
-  if (!mainWindow) return null
-  // macOS: activate app so unparented dialog appears on top
-  if (process.platform === 'darwin') app.focus()
-  const options = {
+  const result = await showModalOpenDialog({
     properties: ['openFile', 'multiSelections'],
     filters: [
       { name: 'All Files', extensions: ['*'] },
       { name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg'] },
       { name: 'Code', extensions: ['ts', 'tsx', 'js', 'jsx', 'py', 'rs', 'go', 'md', 'json', 'yaml', 'toml'] },
     ],
-  }
-  const result = process.platform === 'darwin'
-    ? await dialog.showOpenDialog(options)
-    : await dialog.showOpenDialog(mainWindow, options)
+  })
   if (result.canceled || result.filePaths.length === 0) return null
 
   const { basename, extname } = require('path')

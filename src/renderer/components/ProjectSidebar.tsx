@@ -1,0 +1,342 @@
+import React, { useEffect, useState, useRef } from 'react'
+import { motion, AnimatePresence } from 'framer-motion'
+import { Folder, CaretLeft, CaretRight, CaretDown, CaretUp, Plus, PencilSimple } from '@phosphor-icons/react'
+import { useSessionStore } from '../stores/sessionStore'
+import { useColors } from '../theme'
+import { slideTransition, slideTransitionFast } from '../motion'
+import type { ClaudeProject } from '../../shared/types'
+
+const SIDEBAR_WIDTH = 176
+const PATH_TRUNCATE_LEN = 32
+
+function defaultProjectName(path: string): string {
+  const parts = path.split('/').filter(Boolean)
+  return parts[parts.length - 1] || path
+}
+
+function projectDisplayName(project: ClaudeProject): string {
+  return project.displayName?.trim() || defaultProjectName(project.path)
+}
+
+/** Compact path for sidebar: full path if short, else ../basename or .../parent/basename. */
+function formatPathShort(path: string, maxLen = PATH_TRUNCATE_LEN): string {
+  const normalized = path.replace(/\/$/, '') || path
+  if (normalized.length <= maxLen) return normalized
+
+  const parts = normalized.split('/').filter(Boolean)
+  if (parts.length === 0) return normalized
+
+  const base = parts[parts.length - 1]
+  const parentBase = `../${base}`
+  if (parentBase.length <= maxLen) return parentBase
+
+  if (parts.length >= 2) {
+    const parent = parts[parts.length - 2]
+    const withParent = `.../${parent}/${base}`
+    if (withParent.length <= maxLen) return withParent
+  }
+
+  if (base.length > maxLen - 3) {
+    return `...${base.slice(-(maxLen - 3))}`
+  }
+  return `.../${base}`
+}
+
+function formatAgo(iso: string | null): string {
+  if (!iso) return ''
+  const diff = Date.now() - new Date(iso).getTime()
+  const mins = Math.floor(diff / 60000)
+  if (mins < 1) return 'now'
+  if (mins < 60) return `${mins}m`
+  const hours = Math.floor(mins / 60)
+  if (hours < 24) return `${hours}h`
+  const days = Math.floor(hours / 24)
+  if (days < 7) return `${days}d`
+  return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+}
+
+export function ChatCollapseButton() {
+  const isExpanded = useSessionStore((s) => s.isExpanded)
+  const toggleExpanded = useSessionStore((s) => s.toggleExpanded)
+  const colors = useColors()
+
+  return (
+    <button
+      type="button"
+      data-clui-ui
+      onClick={() => toggleExpanded()}
+      className="clui-pointer flex items-center justify-center rounded-full transition-colors"
+      title={isExpanded ? 'Collapse chat window' : 'Expand chat window'}
+      aria-label={isExpanded ? 'Collapse chat window' : 'Expand chat window'}
+      style={{
+        width: 28,
+        height: 16,
+        color: colors.textTertiary,
+      }}
+    >
+      {isExpanded ? (
+        <CaretDown size={12} weight="bold" />
+      ) : (
+        <CaretUp size={12} weight="bold" />
+      )}
+    </button>
+  )
+}
+
+/** Toggle on the left edge of the chat pane (not the sidebar). */
+export function ProjectSidebarToggle() {
+  const sidebarOpen = useSessionStore((s) => s.sidebarOpen)
+  const toggleSidebar = useSessionStore((s) => s.toggleSidebar)
+  const colors = useColors()
+
+  return (
+    <button
+      type="button"
+      data-clui-ui
+      onClick={() => toggleSidebar()}
+      className="clui-pointer flex items-center justify-center"
+      title={sidebarOpen ? 'Collapse projects' : 'Expand projects'}
+      aria-label={sidebarOpen ? 'Collapse projects' : 'Expand projects'}
+      style={{
+        position: 'absolute',
+        left: -11,
+        top: '50%',
+        transform: 'translateY(-50%)',
+        zIndex: 25,
+        width: 22,
+        height: 40,
+        borderRadius: 10,
+        background: colors.containerBg,
+        border: `1px solid ${colors.containerBorder}`,
+        boxShadow: colors.cardShadowCollapsed,
+        color: colors.textTertiary,
+      }}
+    >
+      {sidebarOpen ? <CaretLeft size={14} weight="bold" /> : <CaretRight size={14} weight="bold" />}
+    </button>
+  )
+}
+
+function ProjectSidebarItem({
+  project,
+  isSelected,
+  onOpen,
+  onRename,
+}: {
+  project: ClaudeProject
+  isSelected: boolean
+  onOpen: () => void
+  onRename: (label: string | null) => void
+}) {
+  const colors = useColors()
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState('')
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  const displayName = projectDisplayName(project)
+  const pathDisplay = formatPathShort(project.path)
+
+  useEffect(() => {
+    if (editing) {
+      setDraft(displayName)
+      inputRef.current?.focus()
+      inputRef.current?.select()
+    }
+  }, [editing, displayName])
+
+  const commitRename = () => {
+    const trimmed = draft.trim()
+    const next =
+      trimmed && trimmed !== defaultProjectName(project.path) ? trimmed : null
+    const current =
+      project.displayName?.trim() &&
+      project.displayName.trim() !== defaultProjectName(project.path)
+        ? project.displayName.trim()
+        : null
+    if (next !== current) onRename(next)
+    setEditing(false)
+  }
+
+  const startEditing = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    setEditing(true)
+  }
+
+  return (
+    <div
+      className="rounded-lg mb-0.5 transition-colors"
+      style={{
+        background: isSelected ? colors.tabActive : 'transparent',
+        border: isSelected ? `1px solid ${colors.tabActiveBorder}` : '1px solid transparent',
+      }}
+    >
+      <button
+        type="button"
+        onClick={onOpen}
+        className="clui-pointer w-full text-left rounded-lg px-2 py-2"
+      >
+        <div className="flex items-start gap-1.5 min-w-0">
+          <Folder size={13} className="flex-shrink-0 mt-0.5" style={{ color: colors.textTertiary }} />
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-1 min-w-0">
+              {editing ? (
+                <input
+                  ref={inputRef}
+                  data-clui-ui
+                  value={draft}
+                  onChange={(e) => setDraft(e.target.value)}
+                  onClick={(e) => e.stopPropagation()}
+                  onMouseDown={(e) => e.stopPropagation()}
+                  onKeyDown={(e) => {
+                    e.stopPropagation()
+                    if (e.key === 'Enter') commitRename()
+                    if (e.key === 'Escape') setEditing(false)
+                  }}
+                  onBlur={commitRename}
+                  className="flex-1 min-w-0 text-[12px] font-medium rounded px-1 py-0.5 outline-none"
+                  style={{
+                    color: colors.textPrimary,
+                    background: colors.surfaceSecondary,
+                    border: `1px solid ${colors.tabActiveBorder}`,
+                  }}
+                />
+              ) : (
+                <>
+                  <div
+                    className="text-[12px] truncate font-medium flex-1 min-w-0"
+                    style={{ color: isSelected ? colors.textPrimary : colors.textSecondary }}
+                    title={displayName}
+                    onDoubleClick={startEditing}
+                  >
+                    {displayName}
+                  </div>
+                  <button
+                    type="button"
+                    data-clui-ui
+                    onClick={startEditing}
+                    className="clui-pointer flex-shrink-0 p-0.5 rounded opacity-60 hover:opacity-100 transition-opacity"
+                    style={{ color: colors.textTertiary }}
+                    title="Rename project"
+                    aria-label="Rename project"
+                  >
+                    <PencilSimple size={11} />
+                  </button>
+                </>
+              )}
+            </div>
+            <div
+              className="text-[10px] mt-0.5 truncate"
+              style={{ color: colors.textTertiary }}
+              title={project.path}
+            >
+              {pathDisplay}
+            </div>
+            <div className="text-[10px] mt-0.5" style={{ color: colors.textTertiary }}>
+              {project.sessionCount === 0
+                ? 'No sessions'
+                : `${project.sessionCount} session${project.sessionCount === 1 ? '' : 's'}`}
+              {project.lastTimestamp ? ` · ${formatAgo(project.lastTimestamp)}` : ''}
+            </div>
+          </div>
+        </div>
+      </button>
+    </div>
+  )
+}
+
+export function ProjectSidebarPanel() {
+  const sidebarOpen = useSessionStore((s) => s.sidebarOpen)
+  const projects = useSessionStore((s) => s.projects)
+  const projectsLoading = useSessionStore((s) => s.projectsLoading)
+  const selectedProjectPath = useSessionStore((s) => s.selectedProjectPath)
+  const openProject = useSessionStore((s) => s.openProject)
+  const renameProject = useSessionStore((s) => s.renameProject)
+  const createProject = useSessionStore((s) => s.createProject)
+  const loadProjects = useSessionStore((s) => s.loadProjects)
+  const colors = useColors()
+
+  useEffect(() => {
+    if (sidebarOpen) void loadProjects()
+  }, [sidebarOpen, loadProjects])
+
+  return (
+    <AnimatePresence initial={false}>
+      {sidebarOpen && (
+    <motion.div
+      data-clui-ui
+      initial={{ width: 0 }}
+      animate={{ width: SIDEBAR_WIDTH }}
+      exit={{ width: 0 }}
+      transition={slideTransition}
+      className="no-drag flex-shrink-0 overflow-hidden self-stretch"
+      style={{ minHeight: 0 }}
+    >
+      <motion.div
+        initial={{ x: -SIDEBAR_WIDTH, opacity: 0 }}
+        animate={{ x: 0, opacity: 1 }}
+        exit={{ x: -SIDEBAR_WIDTH, opacity: 0 }}
+        transition={slideTransitionFast}
+        className="flex flex-col h-full overflow-hidden"
+        style={{
+          width: SIDEBAR_WIDTH,
+          borderRight: `1px solid ${colors.popoverBorder}`,
+        }}
+      >
+      <div className="px-2 pt-2 pb-1">
+        <div
+          className="text-[9px] uppercase tracking-wider px-1"
+          style={{ color: colors.textTertiary }}
+        >
+          Projects
+        </div>
+      </div>
+      <div
+        className="flex-1 min-h-0 overflow-y-auto px-1.5 pb-2"
+        style={{ scrollbarWidth: 'thin' }}
+      >
+        {projectsLoading && (
+          <div className="text-[11px] px-2 py-3" style={{ color: colors.textTertiary }}>
+            Loading…
+          </div>
+        )}
+        {!projectsLoading && projects.length === 0 && (
+          <div className="text-[11px] px-2 py-3" style={{ color: colors.textTertiary }}>
+            No projects yet
+          </div>
+        )}
+        {projects.map((project) => (
+          <ProjectSidebarItem
+            key={project.encodedPath}
+            project={project}
+            isSelected={selectedProjectPath === project.path}
+            onOpen={() => void openProject(project.path)}
+            onRename={(label) => void renameProject(project.path, label)}
+          />
+        ))}
+      </div>
+      <div
+        className="flex-shrink-0 px-2 py-2"
+        style={{ borderTop: `1px solid ${colors.popoverBorder}` }}
+      >
+        <button
+          type="button"
+          onClick={() => void createProject()}
+          className="clui-pointer w-full flex items-center justify-center gap-1.5 rounded-lg px-2 py-2 text-[11px] font-medium transition-colors"
+          style={{
+            color: colors.accent,
+            background: colors.surfaceHover,
+            border: `1px solid ${colors.popoverBorder}`,
+          }}
+        >
+          <Plus size={12} weight="bold" />
+          New project
+        </button>
+      </div>
+      </motion.div>
+    </motion.div>
+      )}
+    </AnimatePresence>
+  )
+}
+
+export const PROJECT_SIDEBAR_WIDTH = SIDEBAR_WIDTH

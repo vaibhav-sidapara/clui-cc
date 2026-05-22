@@ -270,6 +270,14 @@ export interface SessionMeta {
   size: number
 }
 
+export interface ClaudeProject {
+  path: string
+  encodedPath: string
+  displayName: string | null
+  sessionCount: number
+  lastTimestamp: string | null
+}
+
 export interface SessionLoadMessage {
   role: string
   content: string
@@ -328,6 +336,10 @@ export const IPC = {
   LOAD_SESSION: 'clui:load-session',
   GET_SESSION_MODEL: 'clui:get-session-model',
   SET_SESSION_MODEL: 'clui:set-session-model',
+  LIST_PROJECTS: 'clui:list-projects',
+  ENSURE_PROJECT: 'clui:ensure-project',
+  SET_PROJECT_LABEL: 'clui:set-project-label',
+  DELETE_SESSION: 'clui:delete-session',
 
   // One-way events (main → renderer)
   TEXT_CHUNK: 'clui:text-chunk',
