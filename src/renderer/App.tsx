@@ -16,6 +16,7 @@ import { useColors, useThemeStore, spacing } from './theme'
 import { chatBodyTransition, slideTransition } from './motion'
 
 const TRANSITION = slideTransition
+const INPUT_ICON_COLOR = '#d97757'
 
 export default function App() {
   useClaudeEvents()
@@ -179,6 +180,7 @@ export default function App() {
   const isExpanded = useSessionStore((s) => s.isExpanded)
   const sidebarOpen = useSessionStore((s) => s.sidebarOpen)
   const marketplaceOpen = useSessionStore((s) => s.marketplaceOpen)
+  const toggleExpanded = useSessionStore((s) => s.toggleExpanded)
   const isRunning = activeTabStatus === 'running' || activeTabStatus === 'connecting'
 
   // Layout dimensions — expandedUI widens and heightens the panel
@@ -199,6 +201,18 @@ export default function App() {
     if (!files || files.length === 0) return
     addAttachments(files)
   }, [addAttachments])
+
+  // Toggle top slider (expand/collapse chat shell): Cmd/Ctrl + \
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (!(e.metaKey || e.ctrlKey) || e.altKey || e.shiftKey) return
+      if (e.key !== '\\') return
+      e.preventDefault()
+      toggleExpanded()
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [toggleExpanded])
 
   return (
     <PopoverLayerProvider>
@@ -313,6 +327,7 @@ export default function App() {
                   title="Attach file"
                   onClick={handleAttachFile}
                   disabled={isRunning}
+                  style={{ color: INPUT_ICON_COLOR }}
                 >
                   <Paperclip size={17} />
                 </button>
@@ -322,6 +337,7 @@ export default function App() {
                   title="Take screenshot"
                   onClick={handleScreenshot}
                   disabled={isRunning}
+                  style={{ color: INPUT_ICON_COLOR }}
                 >
                   <Camera size={17} />
                 </button>
@@ -331,6 +347,7 @@ export default function App() {
                   title="Skills & Plugins"
                   onClick={() => useSessionStore.getState().toggleMarketplace()}
                   disabled={isRunning}
+                  style={{ color: INPUT_ICON_COLOR }}
                 >
                   <HeadCircuit size={17} />
                 </button>

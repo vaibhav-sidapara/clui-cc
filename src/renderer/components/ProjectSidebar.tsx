@@ -42,7 +42,7 @@ export function ChatCollapseButton() {
       data-clui-ui
       onClick={() => toggleExpanded()}
       className="clui-pointer flex items-center justify-center rounded-full transition-colors"
-      title={isExpanded ? 'Collapse chat window' : 'Expand chat window'}
+      title={isExpanded ? 'Collapse chat window (Cmd/Ctrl+\\)' : 'Expand chat window (Cmd/Ctrl+\\)'}
       aria-label={isExpanded ? 'Collapse chat window' : 'Expand chat window'}
       style={{
         position: 'absolute',

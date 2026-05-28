@@ -66,6 +66,12 @@ input::placeholder {
   color: var(--clui-placeholder);
 }
 
+/* Chat input placeholder override */
+.clui-text-input textarea::placeholder {
+  color: #d97757;
+  opacity: 0.5;
+}
+
 /* ─── Allow text selection in conversation content ─── */
 .prose-cloud,
 .conversation-selectable,
