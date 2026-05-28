@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog, screen, globalShortcut, Tray, Menu, nativeImage, nativeTheme, shell, systemPreferences, session } from 'electron'
+import { app, BrowserWindow, ipcMain, dialog, screen, globalShortcut, powerMonitor, Tray, Menu, nativeImage, nativeTheme, shell, systemPreferences, session } from 'electron'
 import { join } from 'path'
 import { existsSync, readdirSync, statSync, createReadStream } from 'fs'
 import { createInterface } from 'readline'
@@ -336,34 +336,82 @@ function positionWindowOnActiveDisplay(): void {
   lastWindowBounds = mainWindow.getBounds()
 }
 
+/** True when the window center lies inside some display work area. */
+function isWindowOnAnyDisplay(): boolean {
+  if (!mainWindow) return false
+  const bounds = mainWindow.getBounds()
+  const cx = bounds.x + bounds.width / 2
+  const cy = bounds.y + bounds.height / 2
+  return screen.getAllDisplays().some((display) => {
+    const { x, y, width, height } = display.workArea
+    return cx >= x && cx < x + width && cy >= y && cy < y + height
+  })
+}
+
+/** Reposition when bounds are on a disconnected display or otherwise off-screen. */
+function ensureWindowOnVisibleDisplay(reason: string): boolean {
+  if (!mainWindow || isWindowOnAnyDisplay()) return false
+  positionWindowOnActiveDisplay()
+  log(`[window] repositioned off-screen (${reason})`)
+  return true
+}
+
+/** User-facing show: not merely Electron's isVisible() (NSPanel can lie across Spaces). */
+function isWindowShownToUser(): boolean {
+  if (!mainWindow || !mainWindow.isVisible()) return false
+  return isWindowOnAnyDisplay()
+}
+
+function installDisplayChangeHandlers(): void {
+  const repair = (event: string) => {
+    if (!mainWindow?.isVisible()) return
+    ensureWindowOnVisibleDisplay(event)
+  }
+  screen.on('display-metrics-changed', () => repair('display-metrics-changed'))
+  screen.on('display-removed', () => repair('display-removed'))
+}
+
 function showWindow(source = 'unknown'): void {
-  if (!mainWindow) return
+  if (!mainWindow || mainWindow.isDestroyed()) return
   const toggleId = ++toggleSequence
 
-  // Global shortcut: open on the display where the user pressed it.
-  const followCursor = source.includes('shortcut')
+  // Shortcuts + tray: anchor to the display under the cursor (menu bar / hotkey).
+  const followCursor = source.includes('shortcut') || source.includes('tray')
   if (followCursor) {
     positionWindowOnActiveDisplay()
   } else if (lastWindowBounds) {
     mainWindow.setBounds(lastWindowBounds)
+    ensureWindowOnVisibleDisplay('stale bounds')
+  } else {
+    positionWindowOnActiveDisplay()
   }
 
   // Always re-assert space membership — the flag can be lost after hide/show cycles
   // and must be set before show() so the window joins the active Space, not its
   // last-known Space.
   mainWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
+  mainWindow.setAlwaysOnTop(true, 'screen-saver')
 
   if (SPACES_DEBUG) {
     const b = mainWindow.getBounds()
     log(`[spaces] showWindow#${toggleId} source=${source} preserve-bounds=(${b.x},${b.y},${b.width}x${b.height})`)
     snapshotWindowState(`showWindow#${toggleId} pre-show`)
   }
-  // As an accessory app (app.dock.hide), show() + focus gives keyboard
-  // without deactivating the active app — hover preserved everywhere.
-  mainWindow.show()
-  if (lastWindowBounds) {
-    mainWindow.setBounds(lastWindowBounds)
+
+  // NSPanel can report visible while not on the active Space — recycle before show.
+  if (mainWindow.isVisible()) {
+    mainWindow.hide()
   }
+
+  if (process.platform === 'darwin') {
+    app.focus({ steal: true })
+  }
+
+  // Let the user click UI immediately; renderer re-enables click-through on mousemove.
+  mainWindow.setIgnoreMouseEvents(false)
+  mainWindow.show()
+  mainWindow.moveTop()
+  lastWindowBounds = mainWindow.getBounds()
   mainWindow.webContents.focus()
   broadcast(IPC.WINDOW_SHOWN)
   if (SPACES_DEBUG) scheduleToggleSnapshots(toggleId, 'show')
@@ -381,7 +429,7 @@ function toggleWindow(source = 'unknown'): void {
     snapshotWindowState(`toggle#${toggleId} pre`)
   }
 
-  if (mainWindow.isVisible()) {
+  if (isWindowShownToUser()) {
     mainWindow.hide()
     if (SPACES_DEBUG) scheduleToggleSnapshots(toggleId, 'hide')
   } else {
@@ -809,11 +857,7 @@ ipcMain.handle(IPC.TAKE_SCREENSHOT, async () => {
   } catch {
     return null
   } finally {
-    if (mainWindow) {
-      mainWindow.show()
-      mainWindow.webContents.focus()
-    }
-    broadcast(IPC.WINDOW_SHOWN)
+    showWindow('screenshot restore')
     if (SPACES_DEBUG) {
       log('[spaces] screenshot restore show+focus')
       snapshotWindowState('screenshot restore immediate')
@@ -1188,6 +1232,35 @@ async function requestPermissions(): Promise<void> {
   // the screenshot feature is actually used.
 }
 
+// ─── Global shortcuts ───
+// macOS clears global hotkeys after sleep/lock; re-register on resume/unlock.
+
+const SHORTCUT_PRIMARY = 'Alt+Space'
+const SHORTCUT_FALLBACK = 'CommandOrControl+Shift+K'
+
+function registerGlobalShortcuts(reason = 'startup'): void {
+  globalShortcut.unregister(SHORTCUT_PRIMARY)
+  globalShortcut.unregister(SHORTCUT_FALLBACK)
+
+  const primaryOk = globalShortcut.register(SHORTCUT_PRIMARY, () => toggleWindow('shortcut Alt+Space'))
+  const fallbackOk = globalShortcut.register(SHORTCUT_FALLBACK, () => toggleWindow('shortcut Cmd/Ctrl+Shift+K'))
+
+  if (!primaryOk) {
+    log(`[shortcut] ${SHORTCUT_PRIMARY} registration failed (${reason}) — macOS input sources may claim it`)
+  } else if (reason !== 'startup') {
+    log(`[shortcut] re-registered ${SHORTCUT_PRIMARY} (${reason})`)
+  }
+  if (!fallbackOk) {
+    log(`[shortcut] ${SHORTCUT_FALLBACK} registration failed (${reason})`)
+  }
+}
+
+function installShortcutReliabilityHandlers(): void {
+  const refresh = (event: string) => registerGlobalShortcuts(event)
+  powerMonitor.on('resume', () => refresh('resume'))
+  powerMonitor.on('unlock-screen', () => refresh('unlock-screen'))
+}
+
 // ─── App Lifecycle ───
 
 app.whenReady().then(async () => {
@@ -1214,6 +1287,7 @@ app.whenReady().then(async () => {
 
   createWindow()
   snapshotWindowState('after createWindow')
+  installDisplayChangeHandlers()
 
   if (SPACES_DEBUG) {
     mainWindow?.on('show', () => snapshotWindowState('event window show'))
@@ -1241,13 +1315,8 @@ app.whenReady().then(async () => {
   }
 
 
-  // Primary: Option+Space (2 keys, doesn't conflict with shell)
-  // Fallback: Cmd+Shift+K kept as secondary shortcut
-  const registered = globalShortcut.register('Alt+Space', () => toggleWindow('shortcut Alt+Space'))
-  if (!registered) {
-    log('Alt+Space shortcut registration failed — macOS input sources may claim it')
-  }
-  globalShortcut.register('CommandOrControl+Shift+K', () => toggleWindow('shortcut Cmd/Ctrl+Shift+K'))
+  registerGlobalShortcuts()
+  installShortcutReliabilityHandlers()
 
   const trayIconPath = join(__dirname, '../../resources/trayTemplate.png')
   const trayIcon = nativeImage.createFromPath(trayIconPath)

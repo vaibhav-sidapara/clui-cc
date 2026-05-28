@@ -120,6 +120,8 @@ Grant Accessibility permissions:
 
 - System Settings -> Privacy & Security -> Accessibility
 
+If the shortcut worked earlier but stopped after sleep or locking the Mac, quit and reopen Clui CC, or use the fallback below. Newer builds re-register the shortcut automatically when the Mac wakes or unlocks.
+
 Fallback shortcut:
 
 - `Cmd+Shift+K`
@@ -199,8 +201,12 @@ Expected when offline. Marketplace needs internet access; core app features cont
 
 ## Window Is Invisible / No UI
 
+The overlay can end up off-screen after disconnecting an external monitor, or macOS can think it is already visible when it is on another Space. Newer builds reposition the window when you use the tray or shortcut.
+
 Try:
 
-- `⌥ + Space`
-- `Cmd+Shift+K`
-- Confirm app is running from the menu bar tray
+- Menu bar tray → **Show Clui CC** (not only the tray icon click)
+- `⌥ + Space` or `Cmd+Shift+K`
+- Double-click the tab strip area after the window appears (resets position)
+- Quit and reopen Clui CC
+- Confirm the app is running from the menu bar tray
