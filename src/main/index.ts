@@ -99,6 +99,8 @@ let screenshotCounter = 0
 let toggleSequence = 0
 let lastWindowBounds: Electron.Rectangle | null = null
 let currentZoomFactor = 1.0
+/** User asked to see the overlay (shortcut/tray). Decoupled from NSPanel isVisible(), which lies across Spaces. */
+let overlayUserVisible = false
 
 // ─── Zoom persistence ───
 
@@ -271,9 +273,10 @@ function createWindow(): void {
   })
 
   mainWindow.once('ready-to-show', () => {
-    mainWindow?.show()
+    // Start in the tray only — login-item / cold launch should not flash the overlay.
+    overlayUserVisible = false
+    reassertWorkspaceFlags('ready-to-show')
     mainWindow?.setIgnoreMouseEvents(true, { forward: true })
-    // Restore saved zoom factor
     if (currentZoomFactor !== 1.0 && mainWindow) {
       mainWindow.webContents.setZoomFactor(currentZoomFactor)
     }
@@ -304,7 +307,7 @@ function createWindow(): void {
   mainWindow.on('close', (e) => {
     if (!forceQuit) {
       e.preventDefault()
-      mainWindow?.hide()
+      hideOverlayWindow('window close')
     }
   })
 
@@ -356,10 +359,19 @@ function ensureWindowOnVisibleDisplay(reason: string): boolean {
   return true
 }
 
-/** User-facing show: not merely Electron's isVisible() (NSPanel can lie across Spaces). */
-function isWindowShownToUser(): boolean {
-  if (!mainWindow || !mainWindow.isVisible()) return false
-  return isWindowOnAnyDisplay()
+function reassertWorkspaceFlags(reason: string): void {
+  if (!mainWindow || mainWindow.isDestroyed()) return
+  mainWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
+  mainWindow.setAlwaysOnTop(true, 'screen-saver')
+  if (SPACES_DEBUG) log(`[spaces] reassertWorkspaceFlags (${reason})`)
+}
+
+function hideOverlayWindow(source = 'unknown'): void {
+  if (!mainWindow || mainWindow.isDestroyed()) return
+  overlayUserVisible = false
+  mainWindow.setIgnoreMouseEvents(true, { forward: true })
+  mainWindow.hide()
+  if (SPACES_DEBUG) snapshotWindowState(`hideOverlayWindow source=${source}`)
 }
 
 function installDisplayChangeHandlers(): void {
@@ -374,6 +386,7 @@ function installDisplayChangeHandlers(): void {
 function showWindow(source = 'unknown'): void {
   if (!mainWindow || mainWindow.isDestroyed()) return
   const toggleId = ++toggleSequence
+  overlayUserVisible = true
 
   // Shortcuts + tray: anchor to the display under the cursor (menu bar / hotkey).
   const followCursor = source.includes('shortcut') || source.includes('tray')
@@ -389,8 +402,7 @@ function showWindow(source = 'unknown'): void {
   // Always re-assert space membership — the flag can be lost after hide/show cycles
   // and must be set before show() so the window joins the active Space, not its
   // last-known Space.
-  mainWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
-  mainWindow.setAlwaysOnTop(true, 'screen-saver')
+  reassertWorkspaceFlags(`showWindow#${toggleId}`)
 
   if (SPACES_DEBUG) {
     const b = mainWindow.getBounds()
@@ -425,12 +437,25 @@ function toggleWindow(source = 'unknown'): void {
   if (!mainWindow) return
   const toggleId = ++toggleSequence
   if (SPACES_DEBUG) {
-    log(`[spaces] toggle#${toggleId} source=${source} start`)
+    log(`[spaces] toggle#${toggleId} source=${source} start overlayUserVisible=${overlayUserVisible}`)
     snapshotWindowState(`toggle#${toggleId} pre`)
   }
 
-  if (isWindowShownToUser()) {
-    mainWindow.hide()
+  const fromUserSummon = source.includes('shortcut') || source.includes('tray')
+  if (overlayUserVisible && fromUserSummon) {
+    // NSPanel can stay "visible" on another Space while the user is elsewhere.
+    // Re-summon to the active Space unless the overlay is focused here (then hide).
+    if (mainWindow.isVisible() && mainWindow.isFocused()) {
+      hideOverlayWindow(source)
+      if (SPACES_DEBUG) scheduleToggleSnapshots(toggleId, 'hide')
+    } else {
+      showWindow(source)
+    }
+    return
+  }
+
+  if (overlayUserVisible) {
+    hideOverlayWindow(source)
     if (SPACES_DEBUG) scheduleToggleSnapshots(toggleId, 'hide')
   } else {
     showWindow(source)
@@ -454,11 +479,11 @@ ipcMain.handle(IPC.ANIMATE_HEIGHT, () => {
 })
 
 ipcMain.on(IPC.HIDE_WINDOW, () => {
-  mainWindow?.hide()
+  hideOverlayWindow('renderer escape')
 })
 
 ipcMain.handle(IPC.IS_VISIBLE, () => {
-  return mainWindow?.isVisible() ?? false
+  return overlayUserVisible
 })
 
 // OS-level click-through toggle — renderer calls this on mousemove
@@ -1255,10 +1280,33 @@ function registerGlobalShortcuts(reason = 'startup'): void {
   }
 }
 
+function ensureGlobalShortcutsRegistered(reason: string): void {
+  const primaryOk = globalShortcut.isRegistered(SHORTCUT_PRIMARY)
+  const fallbackOk = globalShortcut.isRegistered(SHORTCUT_FALLBACK)
+  if (!primaryOk && !fallbackOk) {
+    registerGlobalShortcuts(reason)
+  }
+}
+
+function handleSystemWake(event: string): void {
+  registerGlobalShortcuts(event)
+  reassertWorkspaceFlags(event)
+  if (overlayUserVisible) {
+    showWindow(`wake ${event}`)
+  }
+}
+
 function installShortcutReliabilityHandlers(): void {
-  const refresh = (event: string) => registerGlobalShortcuts(event)
-  powerMonitor.on('resume', () => refresh('resume'))
-  powerMonitor.on('unlock-screen', () => refresh('unlock-screen'))
+  powerMonitor.on('resume', () => handleSystemWake('resume'))
+  powerMonitor.on('unlock-screen', () => handleSystemWake('unlock-screen'))
+  if (process.platform === 'darwin') {
+    powerMonitor.on('user-did-become-active', () => {
+      ensureGlobalShortcutsRegistered('user-did-become-active')
+      reassertWorkspaceFlags('user-did-become-active')
+    })
+  }
+  // macOS can drop globalShortcut registrations while the app idles in the tray.
+  setInterval(() => ensureGlobalShortcutsRegistered('interval'), 2 * 60 * 1000)
 }
 
 // ─── App Lifecycle ───
@@ -1331,11 +1379,11 @@ app.whenReady().then(async () => {
     ])
   )
 
-  // app 'activate' fires when macOS brings the app to the foreground (e.g. after
-  // webContents.focus() triggers applicationDidBecomeActive on some macOS versions).
-  // Using showWindow here instead of toggleWindow prevents the re-entry race where
-  // a summon immediately hides itself because activate fires mid-show.
-  app.on('activate', () => showWindow('app activate'))
+  // activate fires on cold launch (login item) and after focus steals — only re-show
+  // when the user already had the overlay open; never pop UI on silent tray startup.
+  app.on('activate', () => {
+    if (overlayUserVisible) showWindow('app activate')
+  })
 })
 
 app.on('will-quit', () => {
